@@ -36,9 +36,9 @@ type Collection struct {
 // CollectionType values the server uses. Only albums are publishable
 // galleries; the others are structural and never make sense on an index page.
 const (
-	TypeAlbum        = "album"
-	TypeFolder       = "folder"
-	TypeFavorites    = "favorites"
+	TypeAlbum         = "album"
+	TypeFolder        = "folder"
+	TypeFavorites     = "favorites"
 	TypeUncategorized = "uncategorized"
 )
 
@@ -55,8 +55,8 @@ type CollectionUser struct {
 // file. The three variants differ only in who may see them and which keys
 // decrypt them, not in shape.
 type MagicMetadata struct {
-	Version int    `json:"version"`
-	Count   int    `json:"count"`
+	Version int `json:"version"`
+	Count   int `json:"count"`
 	// Data and Header are base64: ciphertext and secretstream header.
 	Data   string `json:"data"`
 	Header string `json:"header"`
@@ -75,8 +75,8 @@ type PublicURL struct {
 	EnableComment   bool    `json:"enableComment"`
 	PasswordEnabled bool    `json:"passwordEnabled"`
 	Nonce           *string `json:"nonce,omitempty"`
-	MemLimit       *int64  `json:"memLimit,omitempty"`
-	OpsLimit       *int64  `json:"opsLimit,omitempty"`
+	MemLimit        *int64  `json:"memLimit,omitempty"`
+	OpsLimit        *int64  `json:"opsLimit,omitempty"`
 	EnableJoin      bool    `json:"enableJoin"`
 	MinRole         *string `json:"minRole,omitempty"`
 }

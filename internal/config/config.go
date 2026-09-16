@@ -12,6 +12,8 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -19,10 +21,14 @@ import (
 // Config is the parsed config file.
 type Config struct {
 	Account Account `yaml:"account"`
-	Output  string  `yaml:"output"`
-	Site    Site    `yaml:"site"`
-	Map     Map     `yaml:"map"`
-	Albums  Albums  `yaml:"albums"`
+	// DeviceKeyFile keeps the session encryption key in this 0600 file
+	// instead of the OS keyring. For machines without a keyring daemon,
+	// which is any headless box. A leading ~/ is expanded.
+	DeviceKeyFile string `yaml:"device_key_file"`
+	Output        string `yaml:"output"`
+	Site          Site   `yaml:"site"`
+	Map           Map    `yaml:"map"`
+	Albums        Albums `yaml:"albums"`
 }
 
 // Account locates the Ente server and identifies who to log in as.
@@ -115,6 +121,7 @@ func Load(path string) (*Config, error) {
 }
 
 func (c *Config) applyDefaults() {
+	c.DeviceKeyFile = expandTilde(c.DeviceKeyFile)
 	if c.Output == "" {
 		c.Output = defaultOutput
 	}
@@ -160,4 +167,21 @@ func (a *Albums) IsExcluded(id int64) bool {
 		}
 	}
 	return false
+}
+
+// expandTilde resolves a leading ~ to the user's home directory, so configs
+// stay portable across machines with different usernames. Anything else is
+// returned untouched, including a ~ that belongs to someone else's expansion.
+func expandTilde(path string) string {
+	if path != "~" && !strings.HasPrefix(path, "~/") {
+		return path
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return path
+	}
+	if path == "~" {
+		return home
+	}
+	return filepath.Join(home, path[2:])
 }

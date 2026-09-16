@@ -133,3 +133,42 @@ func TestMapCanBeDisabledEitherWay(t *testing.T) {
 		}
 	}
 }
+
+// device_key_file is the one path most likely to be written as ~/..., since
+// it is per-machine and configs get copied between machines, so ~ must expand
+// rather than be passed through to a syscall that cannot open it.
+func TestDeviceKeyFileTildeIsExpanded(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	cfg, err := Load(writeConfig(t, "device_key_file: ~/.config/epg/device.key\n"))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if want := filepath.Join(home, ".config", "epg", "device.key"); cfg.DeviceKeyFile != want {
+		t.Errorf("DeviceKeyFile = %q, want %q", cfg.DeviceKeyFile, want)
+	}
+}
+
+// A quoted "~" is the home directory (bare ~ is YAML's null and means the
+// keyring), and a plain path is untouched.
+func TestDeviceKeyFileTildeEdgeCases(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	cfg, err := Load(writeConfig(t, `device_key_file: "~"` + "\n"))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.DeviceKeyFile != home {
+		t.Errorf(`"~" = %q, want %q`, cfg.DeviceKeyFile, home)
+	}
+
+	cfg, err = Load(writeConfig(t, "device_key_file: /etc/epg/absolute.key\n"))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.DeviceKeyFile != "/etc/epg/absolute.key" {
+		t.Errorf("absolute path was rewritten to %q", cfg.DeviceKeyFile)
+	}
+}

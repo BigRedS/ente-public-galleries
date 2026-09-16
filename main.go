@@ -107,7 +107,13 @@ func (f *commonFlags) register(fs *flag.FlagSet) {
 		"keep the session encryption key in this 0600 file instead of the OS keyring; weaker, for headless machines with no keyring daemon")
 }
 
-func (f *commonFlags) store() (*session.Store, error) {
+// store builds the session store. cfg may be nil for commands that have not
+// loaded a config, in which case only the flags apply.
+//
+// The --device-key-file flag takes precedence over the config's
+// device_key_file, so a one-off can override a standing choice without
+// editing anything.
+func (f *commonFlags) store(cfg *config.Config) (*session.Store, error) {
 	path := f.sessionPath
 	if path == "" {
 		var err error
@@ -115,7 +121,11 @@ func (f *commonFlags) store() (*session.Store, error) {
 			return nil, err
 		}
 	}
-	return &session.Store{Path: path, DeviceKeyFile: f.deviceKeyFile}, nil
+	deviceKeyFile := f.deviceKeyFile
+	if deviceKeyFile == "" && cfg != nil {
+		deviceKeyFile = cfg.DeviceKeyFile
+	}
+	return &session.Store{Path: path, DeviceKeyFile: deviceKeyFile}, nil
 }
 
 func cmdLogin(ctx context.Context, args []string) error {
@@ -132,7 +142,7 @@ func cmdLogin(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	store, err := common.store()
+	store, err := common.store(cfg)
 	if err != nil {
 		return err
 	}
@@ -182,10 +192,10 @@ func cmdLogin(ctx context.Context, args []string) error {
 	}
 
 	fmt.Printf("Logged in as %s.\n", details.Email)
-	if common.deviceKeyFile != "" {
+	if store.DeviceKeyFile != "" {
 		fmt.Fprintf(os.Stderr,
 			"\nWarning: the session encryption key is in %s, protected only by file\npermissions. Anything able to read that file and %s can use your\nEnte account. Prefer the OS keyring where one is available.\n",
-			common.deviceKeyFile, store.Path)
+			store.DeviceKeyFile, store.Path)
 	}
 	return nil
 }
@@ -197,7 +207,14 @@ func cmdLogout(args []string) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	store, err := common.store()
+	// The config is loaded even to log out, because the device key's
+	// location comes from it: logging out must remove the key wherever
+	// login actually put it.
+	cfg, err := config.Load(common.configPath)
+	if err != nil {
+		return err
+	}
+	store, err := common.store(cfg)
 	if err != nil {
 		return err
 	}
@@ -221,7 +238,11 @@ func cmdWhoami(ctx context.Context, args []string) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	store, err := common.store()
+	cfg, err := config.Load(common.configPath)
+	if err != nil {
+		return err
+	}
+	store, err := common.store(cfg)
 	if err != nil {
 		return err
 	}
@@ -291,7 +312,7 @@ func cmdList(ctx context.Context, args []string) error {
 // configured server with them would produce nonsense rather than an obvious
 // error.
 func sessionClient(common commonFlags, cfg *config.Config) (*enteapi.Credentials, *enteapi.Client, error) {
-	store, err := common.store()
+	store, err := common.store(cfg)
 	if err != nil {
 		return nil, nil, err
 	}
