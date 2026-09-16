@@ -16,6 +16,10 @@
 // shows only real changes, so tracking Ente's crypto is a mechanical job rather
 // than an archaeological one. Resist the urge to reformat or tidy them.
 //
+// One visible consequence: stream.go is not gofmt-clean, because it is not
+// gofmt-clean upstream either. `gofmt -l` will always name it. Do not fix
+// that; formatting it would make every future upstream diff noisy for no gain.
+//
 // Copying rather than importing is forced, not chosen. The code lives under
 // cli/internal/, which Go's internal-package rule makes unimportable from
 // another module, and the CLI declares its module path as github.com/ente/cli,
