@@ -55,6 +55,23 @@ func newSiteFixture(t *testing.T) *siteFixture {
 	}
 }
 
+// loadCfgWith replaces the fixture's config with one loaded from real
+// content, so settings like the title regex arrive compiled, exactly as they
+// would for a running build.
+func (f *siteFixture) loadCfgWith(t *testing.T, extra string) {
+	t.Helper()
+	dir := t.TempDir()
+	body := "output: " + f.cfg.Output + "\n" + extra
+	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(body), 0o600); err != nil {
+		t.Fatalf("writing config: %v", err)
+	}
+	cfg, err := config.Load(filepath.Join(dir, "config.yaml"))
+	if err != nil {
+		t.Fatalf("loading config: %v", err)
+	}
+	f.cfg = cfg
+}
+
 // writeCover places a stand-in thumbnail where Assemble looks for it.
 func (f *siteFixture) writeCover(t *testing.T, albumID int64) {
 	t.Helper()
@@ -158,6 +175,71 @@ func TestAssembleAppliesOverrides(t *testing.T) {
 		}
 	}
 	t.Error("overridden title never appeared in the cards")
+}
+
+// The title substitution reaches cards, map points and the name-sort
+// tiebreak; explicit overrides are verbatim and are not themselves cleaned.
+func TestAssembleAppliesTitleRegex(t *testing.T) {
+	f := newSiteFixture(t)
+	// Strip a leading "YYYY-MM ", like a dated album list.
+	f.loadCfgWith(t, `albums:
+  title_regex: 's/^\d\d\d\d-\d\d //'
+  overrides:
+    2:
+      title: 2026-05 Kept Verbatim
+`)
+	f.albums[0].Name = "2025-03 Birthday Trackday"
+	f.albums[1].Name = "2026-05 Ducati Centenary"
+
+	site := Assemble(f.cfg, f.cfg.Output, f.albums, f.indexes)
+
+	var names []string
+	for _, card := range site.Cards {
+		names = append(names, card.Name)
+	}
+	// Cleaned, override-verbatim, and no double-cleaning to check: the
+	// set as a whole is what matters.
+	for _, want := range []string{"Birthday Trackday", "2026-05 Kept Verbatim"} {
+		found := false
+		for _, name := range names {
+			if name == want {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("cards %v missing %q", names, want)
+		}
+	}
+
+	// The map point carries the cleaned name too, since the popup is what
+	// a visitor reads.
+	for _, point := range site.Points {
+		if point.Name == "Birthday Trackday" {
+			return
+		}
+	}
+	t.Errorf("points %v do not carry the cleaned title", site.Points)
+}
+
+// The alphabetical tiebreak sorts by what the page shows, not by the raw
+// Ente name, so a stripped date prefix cannot dominate the ordering.
+func TestAssembleSortsByCleanedName(t *testing.T) {
+	f := newSiteFixture(t)
+	f.loadCfgWith(t, `albums:
+  title_regex: 's/^\d\d\d\d-\d\d //'
+`)
+	f.albums = []gallery.Album{
+		{ID: 1, Name: "2025-01 Zebra", ShareURL: "u1"},
+		{ID: 2, Name: "2024-12 Alpha", ShareURL: "u2"},
+	}
+
+	site := Assemble(f.cfg, f.cfg.Output, f.albums, f.indexes)
+	if len(site.Cards) != 2 {
+		t.Fatalf("got %d cards, want 2", len(site.Cards))
+	}
+	if site.Cards[0].Name != "Alpha" || site.Cards[1].Name != "Zebra" {
+		t.Errorf("order = %q, %q; want Alpha before Zebra by cleaned name", site.Cards[0].Name, site.Cards[1].Name)
+	}
 }
 
 func TestAssembleOrdersByConfigThenMagicOrderThenName(t *testing.T) {

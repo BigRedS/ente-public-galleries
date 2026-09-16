@@ -84,7 +84,9 @@ func Assemble(cfg *config.Config, output string, albums []gallery.Album, indexes
 	ordered := orderAlbums(albums, cfg)
 	for _, album := range ordered {
 		card := Card{
-			Name:        album.Name,
+			// The displayed title is the cleaned one; the map popups
+			// and any diagnostics use the same string via card.Name.
+			Name:        cfg.Albums.CleanTitle(album.Name),
 			Description: album.Description,
 			ShareURL:    album.ShareURL,
 			ThumbPath:   fmt.Sprintf("thumbs/%d.jpg", album.ID),
@@ -180,7 +182,10 @@ func orderAlbums(albums []gallery.Album, cfg *config.Config) []gallery.Album {
 		case oj != 0:
 			return false
 		}
-		return ordered[i].Name < ordered[j].Name
+		// The last tiebreak is the title as displayed, so the page reads
+		// alphabetically to a human, not alphabetically by whatever
+		// prefix the title_regex strips off.
+		return cfg.Albums.CleanTitle(ordered[i].Name) < cfg.Albums.CleanTitle(ordered[j].Name)
 	})
 	return ordered
 }

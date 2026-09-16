@@ -13,6 +13,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -74,6 +75,104 @@ type Albums struct {
 	Exclude   []int64            `yaml:"exclude"`
 	Order     []int64            `yaml:"order"`
 	Overrides map[int64]Override `yaml:"overrides"`
+	// TitleRegex is a sed-style substitution applied to album titles for
+	// display, for stripping the parts Ente titles carry that a gallery
+	// page should not show: 's/^\d\d\d\d-\d\d\///' drops a leading
+	// YYYY-MM. The pattern is Go regexp (RE2) syntax; the replacement may
+	// use $1-style group references. Without a trailing g flag only the
+	// first match is replaced, as in sed. A substitution that empties the
+	// title leaves the original in place, so a pattern cannot blank the
+	// page by accident.
+	TitleRegex string `yaml:"title_regex"`
+
+	// titleRe and friends are the compiled form of TitleRegex, set by
+	// Load. The zero value of Albums is safe to use without them.
+	titleRe          *regexp.Regexp
+	titleReplacement string
+	titleGlobal      bool
+}
+
+// CleanTitle applies the configured title substitution, if any.
+//
+// It is a method on Albums rather than a free function so the compiled
+// pattern travels with the config that declared it, and so a hand-built
+// Albums with no regex is naturally a no-op.
+func (a *Albums) CleanTitle(title string) string {
+	if a.titleRe == nil {
+		return title
+	}
+	result := title
+	if a.titleGlobal {
+		result = a.titleRe.ReplaceAllString(title, a.titleReplacement)
+	} else if match := a.titleRe.FindStringSubmatchIndex(title); match != nil {
+		// Go's regexp has no replace-first; expand the replacement
+		// against the single match and splice it in by hand.
+		expanded := a.titleRe.ExpandString(nil, a.titleReplacement, title, match)
+		result = title[:match[0]] + string(expanded) + title[match[1]:]
+	}
+	if strings.TrimSpace(result) == "" {
+		// A pattern that swallows the whole title would leave a blank
+		// card heading, which reads as breakage; the original title is
+		// the better failure.
+		return title
+	}
+	return result
+}
+
+// parseSubstitution splits a sed-style s/pattern/replacement/flags command.
+// A backslash-escaped delimiter (\/) is unescaped to a plain / in whichever
+// field it appears: that is what the escape means in sed, the pattern side
+// wants a literal slash, and the replacement side must not carry a stray
+// backslash into Go's $-syntax replacement. Other backslash sequences pass
+// through untouched for the regexp engine to interpret.
+// The flags field may be empty or g.
+func parseSubstitution(substitution string) (pattern, replacement string, global bool, err error) {
+	if !strings.HasPrefix(substitution, "s/") {
+		return "", "", false, errors.New(`must look like s/pattern/replacement/ (start with "s/")`)
+	}
+	body := substitution[2:]
+
+	var fields []string
+	var current strings.Builder
+	for i := 0; i < len(body); i++ {
+		switch body[i] {
+		case '\\':
+			if i+1 < len(body) {
+				i++
+				if body[i] == '/' {
+					// Escaped delimiter: the field wants a
+					// literal slash, not a split.
+					current.WriteByte('/')
+				} else {
+					current.WriteByte('\\')
+					current.WriteByte(body[i])
+				}
+			} else {
+				current.WriteByte('\\')
+			}
+		case '/':
+			fields = append(fields, current.String())
+			current.Reset()
+		default:
+			current.WriteByte(body[i])
+		}
+	}
+	// The final field is only committed by a closing delimiter, as in sed:
+	// s/a/b has no flags field and is a syntax error.
+	fields = append(fields, current.String())
+	if len(fields) != 3 {
+		return "", "", false, fmt.Errorf("expected pattern/replacement/flags, got %d field(s); a missing final / is the usual cause", len(fields))
+	}
+
+	pattern, replacement, flags := fields[0], fields[1], fields[2]
+	switch flags {
+	case "":
+	case "g":
+		global = true
+	default:
+		return "", "", false, fmt.Errorf("unknown flag %q; only g is supported", flags)
+	}
+	return pattern, replacement, global, nil
 }
 
 // Override replaces what Ente reports for one album. Empty fields defer to
@@ -172,6 +271,22 @@ func (c *Config) validate() error {
 	default:
 		return fmt.Errorf("map.points is %q, expected one of %q, %q or %q",
 			c.Map.Points, PointsAlbums, PointsPhotos, PointsNone)
+	}
+
+	if c.Albums.TitleRegex != "" {
+		pattern, replacement, global, err := parseSubstitution(c.Albums.TitleRegex)
+		if err != nil {
+			return fmt.Errorf("albums.title_regex %q: %w", c.Albums.TitleRegex, err)
+		}
+		// Compile here rather than at first use, so a bad pattern is a
+		// config error at startup, not a surprise mid-build.
+		re, err := regexp.Compile(pattern)
+		if err != nil {
+			return fmt.Errorf("albums.title_regex %q: %w", c.Albums.TitleRegex, err)
+		}
+		c.Albums.titleRe = re
+		c.Albums.titleReplacement = replacement
+		c.Albums.titleGlobal = global
 	}
 	return nil
 }

@@ -172,3 +172,149 @@ func TestDeviceKeyFileTildeEdgeCases(t *testing.T) {
 		t.Errorf("absolute path was rewritten to %q", cfg.DeviceKeyFile)
 	}
 }
+
+func TestParseSubstitution(t *testing.T) {
+	tests := []struct {
+		input       string
+		pattern     string
+		replacement string
+		global      bool
+		wantErr     string
+	}{
+		{input: `s/^\d\d\d\d-\d\d//`, pattern: `^\d\d\d\d-\d\d`, replacement: ""},
+		{input: "s/foo/bar/", pattern: "foo", replacement: "bar"},
+		{input: "s/foo/bar/g", pattern: "foo", replacement: "bar", global: true},
+		{input: `s/a\/b/c/`, pattern: `a/b`, replacement: "c"},
+		{input: "s/a", wantErr: "1 field(s)"},
+		{input: "x/a/b/", wantErr: `must look like`},
+		{input: "s/a/b/x", wantErr: "unknown flag"},
+	}
+	for _, test := range tests {
+		t.Run(test.input, func(t *testing.T) {
+			pattern, replacement, global, err := parseSubstitution(test.input)
+			if test.wantErr != "" {
+				if err == nil {
+					t.Fatalf("parseSubstitution(%q) succeeded, want an error", test.input)
+				}
+				if !strings.Contains(err.Error(), test.wantErr) {
+					t.Errorf("error = %q, want it to mention %q", err, test.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("parseSubstitution(%q): %v", test.input, err)
+			}
+			if pattern != test.pattern || replacement != test.replacement || global != test.global {
+				t.Errorf("parsed %q/%q/%v, want %q/%q/%v", pattern, replacement, global, test.pattern, test.replacement, test.global)
+			}
+		})
+	}
+}
+
+func TestTitleRegexCleansTitles(t *testing.T) {
+	// Titles here use a space after the date, matching the shape real
+	// Ente albums have; the escaped-delimiter form gets its own case.
+	cfg, err := Load(writeConfig(t, `albums:
+  title_regex: 's/^\d\d\d\d-\d\d //'
+`))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	tests := []struct{ in, want string }{
+		{"2025-03 Birthday Trackday", "Birthday Trackday"},
+		{"2026-05 Ducati centenary Trackday", "Ducati centenary Trackday"},
+		// No match passes through untouched.
+		{"Just A Name", "Just A Name"},
+		// The pattern is anchored, so a date mid-title stays.
+		{"Trip 2024-12 somewhere", "Trip 2024-12 somewhere"},
+	}
+	for _, test := range tests {
+		if got := cfg.Albums.CleanTitle(test.in); got != test.want {
+			t.Errorf("CleanTitle(%q) = %q, want %q", test.in, got, test.want)
+		}
+	}
+
+	// An escaped delimiter in the pattern is a literal slash, so titles
+	// that genuinely use "YYYY-MM/Name" separators strip cleanly.
+	slashCfg, err := Load(writeConfig(t, `albums:
+  title_regex: 's/^\d\d\d\d-\d\d\///'
+`))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got, want := slashCfg.Albums.CleanTitle("2025-03/Birthday"), "Birthday"; got != want {
+		t.Errorf("escaped-delimiter CleanTitle = %q, want %q", got, want)
+	}
+}
+
+// A substitution that swallows the entire title must not blank the page; the
+// original is the better failure than an empty heading.
+func TestTitleRegexEmptyResultFallsBack(t *testing.T) {
+	cfg, err := Load(writeConfig(t, `albums:
+  title_regex: 's/^\d\d\d\d-\d\d.*$//'
+`))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got := cfg.Albums.CleanTitle("2025-03 Trackday"); got != "2025-03 Trackday" {
+		t.Errorf("blanked result = %q, want the original kept", got)
+	}
+}
+
+func TestTitleRegexGlobalFlagAndGroups(t *testing.T) {
+	cfg, err := Load(writeConfig(t, `albums:
+  title_regex: 's/(\d\d\d\d)-(\d\d)/$2\/$1/g'
+`))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got, want := cfg.Albums.CleanTitle("2025-03 and 2024-11"), "03/2025 and 11/2024"; got != want {
+		t.Errorf("CleanTitle = %q, want %q", got, want)
+	}
+
+	cfg, err = Load(writeConfig(t, `albums:
+  title_regex: 's/x/y/'
+`))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got, want := cfg.Albums.CleanTitle("axbxc"), "aybxc"; got != want {
+		t.Errorf("without g, CleanTitle = %q, want %q (first match only)", got, want)
+	}
+}
+
+// No title_regex configured must be the identity, including for a hand-built
+// config that never went through Load.
+func TestCleanTitleWithoutRegexIsIdentity(t *testing.T) {
+	var albums Albums
+	if got := albums.CleanTitle("2025-03 Untouched"); got != "2025-03 Untouched" {
+		t.Errorf("CleanTitle = %q, want identity", got)
+	}
+
+	cfg, err := Load(writeConfig(t, "output: ./out\n"))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got := cfg.Albums.CleanTitle("2025-03 Untouched"); got != "2025-03 Untouched" {
+		t.Errorf("CleanTitle = %q, want identity", got)
+	}
+}
+
+// A broken substitution is a config error at load, not a surprise mid-build.
+func TestTitleRegexErrorsAtLoad(t *testing.T) {
+	for _, body := range []string{
+		"albums:\n  title_regex: 's/[unclosed/'\n",
+		"albums:\n  title_regex: 's/a/b/x'\n",
+		"albums:\n  title_regex: 's/a/b'\n",
+		"albums:\n  title_regex: replace-me\n",
+	} {
+		_, err := Load(writeConfig(t, body))
+		if err == nil {
+			t.Errorf("Load accepted %q, expected an error", body)
+		}
+		if err != nil && !strings.Contains(err.Error(), "title_regex") {
+			t.Errorf("error for %q does not name the setting: %v", body, err)
+		}
+	}
+}

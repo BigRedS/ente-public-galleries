@@ -325,8 +325,8 @@ func cmdList(ctx context.Context, args []string) error {
 		}
 	}
 
-	printAlbums(albums, counts)
-	printSkips(skips, *verbose)
+	printAlbums(albums, counts, &cfg.Albums)
+	printSkips(skips, *verbose, &cfg.Albums)
 	return nil
 }
 
@@ -397,7 +397,7 @@ func cmdBuild(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	printSkips(skips, false)
+	printSkips(skips, false, &cfg.Albums)
 
 	covers := &gallery.Covers{Fetcher: client, Dir: filepath.Join(cfg.Output, "thumbs")}
 	coverFailures := 0
@@ -514,7 +514,7 @@ func cmdCovers(ctx context.Context, args []string) error {
 	return nil
 }
 
-func printAlbums(albums []gallery.Album, counts []albumCounts) {
+func printAlbums(albums []gallery.Album, counts []albumCounts, albumsCfg *config.Albums) {
 	if len(albums) == 0 {
 		fmt.Println("No publishable albums found.")
 		return
@@ -534,7 +534,7 @@ func printAlbums(albums []gallery.Album, counts []albumCounts) {
 		if i < len(counts) {
 			files = fmt.Sprintf("%d (%d geo)", counts[i].files, counts[i].geo)
 		}
-		fmt.Fprintf(w, "%d\t%s%s\t%s\t%s\t%s\n", a.ID, a.Name, notesFor(a), expires, files, a.ShareURL)
+		fmt.Fprintf(w, "%d\t%s%s\t%s\t%s\t%s\n", a.ID, albumsCfg.CleanTitle(a.Name), notesFor(a), expires, files, a.ShareURL)
 	}
 	w.Flush()
 
@@ -558,7 +558,7 @@ func notesFor(a gallery.Album) string {
 	return notes
 }
 
-func printSkips(skips []gallery.Skip, verbose bool) {
+func printSkips(skips []gallery.Skip, verbose bool, albumsCfg *config.Albums) {
 	if len(skips) == 0 {
 		return
 	}
@@ -566,7 +566,7 @@ func printSkips(skips []gallery.Skip, verbose bool) {
 	fmt.Fprintln(os.Stderr, "Not published:")
 	if verbose {
 		for _, s := range skips {
-			fmt.Fprintf(os.Stderr, "  %-8d %s: %s\n", s.ID, s.Name, s.Reason)
+			fmt.Fprintf(os.Stderr, "  %-8d %s: %s\n", s.ID, albumsCfg.CleanTitle(s.Name), s.Reason)
 		}
 		fmt.Fprintln(os.Stderr)
 	}

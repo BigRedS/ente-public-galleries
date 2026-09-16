@@ -19,9 +19,14 @@ account:
   # custom domain. Leave unset to use the links exactly as Ente reports them.
   # album_url_base: https://albums.ente.com
 
-# Keep the session encryption key in this 0600 file instead of the OS keyring.
-# For machines without a keyring daemon - any headless box. Weaker: anything
-# able to read this file and the session file can use your Ente account.
+# The session's device key comes from, in order of precedence:
+#
+#   1. --device-key-file, for a one-off
+#   2. ENTE_CLI_SECRETS_PATH - the ente CLI's own headless fallback, so one
+#      key file serves both tools; the file is the CLI's raw 32-byte format
+#   3. device_key_file below, this tool's own file
+#   4. the OS keyring
+#
 # device_key_file: ~/.config/ente-public-galleries/device.key
 
 # Where the generated site is written.
@@ -58,6 +63,18 @@ map:
   # leaflet_css: https://unpkg.com/leaflet@1.9.4/dist/leaflet.css
 
 albums:
+  # A sed-style substitution applied to album titles for display, for
+  # stripping prefixes Ente titles carry that a gallery page should not show.
+  # The pattern is Go regexp (RE2) syntax; the replacement may use $1-style
+  # group references; a trailing g replaces every match, without it only the
+  # first. A substitution that would empty a title leaves it unchanged.
+  #
+  # For titles like "2025-03 Birthday Trackday" (date, space, name):
+  #   title_regex: 's/^\d\d\d\d-\d\d //'
+  # For titles like "2025-03/Birthday" (date, slash, name):
+  #   title_regex: 's/^\d\d\d\d-\d\d\///'
+  # title_regex: s/^\d\d\d\d-\d\d //
+
   # Ente collection IDs to leave off the page. `list` shows each album's ID.
   # exclude: [1234567890]
 
