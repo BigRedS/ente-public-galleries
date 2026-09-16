@@ -80,10 +80,27 @@ type secrets struct {
 // Store reads and writes the saved session.
 //
 // DeviceKeyFile, when set, replaces the OS keyring with a 0600 file at that
-// path. Leave it empty for the keyring.
+// path holding our own device key, base64-encoded. Leave it empty for the
+// keyring.
+//
+// SharedDeviceKeyFile, when set, instead takes the device key from the ente
+// CLI's secrets file - the path the CLI itself uses when ENTE_CLI_SECRETS_PATH
+// is set on a machine with no keyring. That file holds the key as 32 raw
+// bytes and is not permission-checked, because both conventions are the
+// CLI's own (it writes the file 0644) and refusing to read its standard
+// layout would defeat the point of sharing. When we create it ourselves we
+// write raw bytes at 0600: stricter than the CLI's mode, and still exactly
+// what it reads.
 type Store struct {
-	Path          string
+	Path string
+	// DeviceKeyFile is our own device key file. Base64, and 0600 is
+	// enforced.
 	DeviceKeyFile string
+	// SharedDeviceKeyFile is a device key file shared with the ente CLI:
+	// raw 32 bytes, permission-lenient, and never deleted by us, because
+	// the CLI's own stored accounts are encrypted under it and removing it
+	// would break them.
+	SharedDeviceKeyFile string
 }
 
 // DefaultPath is where sessions live absent other instruction, following XDG.
@@ -198,6 +215,11 @@ func (s *Store) Load() (*enteapi.Credentials, string, error) {
 // reports whether anything was actually there, so callers can avoid claiming
 // to have logged out of nothing.
 //
+// A shared device key file (the ente CLI's) is deliberately never deleted:
+// the CLI's own stored accounts are encrypted under it, and removing it would
+// break a tool that is not this one. The session file alone is the secret;
+// the key by itself decrypts nothing.
+//
 // A missing file or keyring entry is not an error: discarding a session that
 // is already gone is the desired end state either way.
 func (s *Store) Delete() (existed bool, err error) {
@@ -205,6 +227,10 @@ func (s *Store) Delete() (existed bool, err error) {
 		existed = true
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return existed, fmt.Errorf("removing session file: %w", err)
+	}
+
+	if s.SharedDeviceKeyFile != "" {
+		return existed, nil
 	}
 
 	if s.DeviceKeyFile != "" {
@@ -227,10 +253,71 @@ func (s *Store) Delete() (existed bool, err error) {
 // deviceKey fetches the key that encrypts the session file, creating one when
 // create is set and none exists.
 func (s *Store) deviceKey(create bool) (*[deviceKeySize]byte, error) {
-	if s.DeviceKeyFile != "" {
+	switch {
+	case s.SharedDeviceKeyFile != "":
+		return s.deviceKeyFromSharedFile(create)
+	case s.DeviceKeyFile != "":
 		return s.deviceKeyFromFile(create)
+	default:
+		return s.deviceKeyFromKeyring(create)
 	}
-	return s.deviceKeyFromKeyring(create)
+}
+
+// deviceKeyFromSharedFile reads the ente CLI's device key, matching the
+// CLI's own reading of that file: 32 raw bytes. Base64 is also accepted, so
+// a file written there by this tool before the shared mode existed keeps
+// working.
+//
+// Unlike our own device key file, permissions are not enforced or warned
+// about. The file belongs to the CLI and its conventions (it writes it
+// 0644); reading a standard-layout file from another tool beats policing
+// that tool's choices from here.
+func (s *Store) deviceKeyFromSharedFile(create bool) (*[deviceKeySize]byte, error) {
+	body, err := os.ReadFile(s.SharedDeviceKeyFile)
+	switch {
+	case err == nil:
+		if key, ok := deviceKeyFromBytes(body); ok {
+			return key, nil
+		}
+		return nil, fmt.Errorf("%s does not hold a usable device key: expected 32 raw bytes (or their base64), got %d bytes", s.SharedDeviceKeyFile, len(body))
+	case errors.Is(err, os.ErrNotExist):
+		if !create {
+			return nil, fmt.Errorf("device key file %s does not exist, so the session cannot be decrypted: %w", s.SharedDeviceKeyFile, ErrNoSession)
+		}
+	default:
+		return nil, fmt.Errorf("reading shared device key file: %w", err)
+	}
+
+	key, err := newDeviceKey()
+	if err != nil {
+		return nil, err
+	}
+	// Raw bytes, matching what the CLI reads. 0600 rather than the CLI's
+	// 0644: the CLI never inspects the mode, so stricter costs it nothing.
+	if err := os.MkdirAll(filepath.Dir(s.SharedDeviceKeyFile), 0o700); err != nil {
+		return nil, fmt.Errorf("creating shared device key directory: %w", err)
+	}
+	if err := os.WriteFile(s.SharedDeviceKeyFile, key[:], 0o600); err != nil {
+		return nil, fmt.Errorf("writing shared device key file: %w", err)
+	}
+	return key, nil
+}
+
+// deviceKeyFromBytes accepts the two shapes a shared device key file can
+// hold: 32 raw bytes, or 32 bytes encoded as base64.
+func deviceKeyFromBytes(body []byte) (*[deviceKeySize]byte, bool) {
+	trimmed := []byte(strings.TrimSpace(string(body)))
+	if len(trimmed) == deviceKeySize {
+		var key [deviceKeySize]byte
+		copy(key[:], trimmed)
+		return &key, true
+	}
+	if decoded, err := base64.StdEncoding.DecodeString(string(trimmed)); err == nil && len(decoded) == deviceKeySize {
+		var key [deviceKeySize]byte
+		copy(key[:], decoded)
+		return &key, true
+	}
+	return nil, false
 }
 
 func (s *Store) deviceKeyFromKeyring(create bool) (*[deviceKeySize]byte, error) {

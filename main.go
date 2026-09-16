@@ -118,9 +118,10 @@ func (f *commonFlags) register(fs *flag.FlagSet) {
 // store builds the session store. cfg may be nil for commands that have not
 // loaded a config, in which case only the flags apply.
 //
-// The --device-key-file flag takes precedence over the config's
-// device_key_file, so a one-off can override a standing choice without
-// editing anything.
+// Device key precedence, first match wins: the --device-key-file flag for a
+// one-off, then ENTE_CLI_SECRETS_PATH to share the ente CLI's device key file
+// (the CLI's own headless fallback, so one key file serves both tools), then
+// the config's device_key_file, then the OS keyring.
 func (f *commonFlags) store(cfg *config.Config) (*session.Store, error) {
 	path := f.sessionPath
 	if path == "" {
@@ -129,8 +130,16 @@ func (f *commonFlags) store(cfg *config.Config) (*session.Store, error) {
 			return nil, err
 		}
 	}
-	deviceKeyFile := f.deviceKeyFile
-	if deviceKeyFile == "" && cfg != nil {
+
+	if f.deviceKeyFile != "" {
+		return &session.Store{Path: path, DeviceKeyFile: f.deviceKeyFile}, nil
+	}
+	if shared := os.Getenv("ENTE_CLI_SECRETS_PATH"); shared != "" {
+		return &session.Store{Path: path, SharedDeviceKeyFile: shared}, nil
+	}
+
+	deviceKeyFile := ""
+	if cfg != nil {
 		deviceKeyFile = cfg.DeviceKeyFile
 	}
 	return &session.Store{Path: path, DeviceKeyFile: deviceKeyFile}, nil
@@ -200,7 +209,12 @@ func cmdLogin(ctx context.Context, args []string) error {
 	}
 
 	fmt.Printf("Logged in as %s.\n", details.Email)
-	if store.DeviceKeyFile != "" {
+	switch {
+	case store.SharedDeviceKeyFile != "":
+		fmt.Fprintf(os.Stderr,
+			"\nNote: this session is encrypted with the ente CLI's device key at %s,\nso both tools now depend on that file. Deleting it (or letting the CLI\nregenerate it) means logging in here again.\n",
+			store.SharedDeviceKeyFile)
+	case store.DeviceKeyFile != "":
 		fmt.Fprintf(os.Stderr,
 			"\nWarning: the session encryption key is in %s, protected only by file\npermissions. Anything able to read that file and %s can use your\nEnte account. Prefer the OS keyring where one is available.\n",
 			store.DeviceKeyFile, store.Path)
@@ -506,6 +520,9 @@ func printAlbums(albums []gallery.Album, counts []albumCounts) {
 		return
 	}
 
+	// Titles print as the site would show them, cleaned by the same
+	// substitution, so the listing previews the page rather than Ente's
+	// raw naming.
 	w := tabwriter.NewWriter(os.Stdout, 2, 8, 2, ' ', 0)
 	fmt.Fprintln(w, "ID\tNAME\tEXPIRES\tFILES\tLINK")
 	for i, a := range albums {
