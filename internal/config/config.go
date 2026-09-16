@@ -61,6 +61,11 @@ type Map struct {
 	Points      string `yaml:"points"`
 	Tiles       string `yaml:"tiles"`
 	Attribution string `yaml:"attribution"`
+	// LeafletJS and LeafletCSS are where the Leaflet library itself comes
+	// from. They default to a CDN; pointing them at self-hosted copies
+	// removes the last third party from the generated page.
+	LeafletJS  string `yaml:"leaflet_js"`
+	LeafletCSS string `yaml:"leaflet_css"`
 }
 
 // Albums selects and overrides individual albums, keyed by Ente's collection
@@ -92,6 +97,8 @@ const (
 	defaultTitle       = "Galleries"
 	defaultTiles       = "https://tile.openstreetmap.org/{z}/{x}/{y}.png"
 	defaultAttribution = `&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors`
+	defaultLeafletJS   = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+	defaultLeafletCSS  = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
 )
 
 // Load reads path. A missing file yields defaults, because the tool is usable
@@ -150,6 +157,12 @@ func (c *Config) applyDefaults() {
 	}
 	if c.Map.Attribution == "" {
 		c.Map.Attribution = defaultAttribution
+	}
+	if c.Map.LeafletJS == "" {
+		c.Map.LeafletJS = defaultLeafletJS
+	}
+	if c.Map.LeafletCSS == "" {
+		c.Map.LeafletCSS = defaultLeafletCSS
 	}
 }
 

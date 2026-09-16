@@ -25,6 +25,7 @@ import (
 	"github.com/BigRedS/ente-public-galleries/internal/enteapi"
 	"github.com/BigRedS/ente-public-galleries/internal/gallery"
 	"github.com/BigRedS/ente-public-galleries/internal/prompt"
+	"github.com/BigRedS/ente-public-galleries/internal/render"
 	"github.com/BigRedS/ente-public-galleries/internal/session"
 )
 
@@ -60,6 +61,7 @@ Commands:
   whoami   Show who the saved session belongs to
   list     Show the albums that would be published
   covers   Fetch cover thumbnails for the publishable albums
+  build    Generate the site
 
 Run a command with -h for its flags.
 `
@@ -85,6 +87,8 @@ func run(args []string) error {
 		return cmdList(ctx, rest)
 	case "covers":
 		return cmdCovers(ctx, rest)
+	case "build":
+		return cmdBuild(ctx, rest)
 	case "-h", "--help", "help":
 		fmt.Print(usage)
 		return nil
@@ -292,29 +296,14 @@ func cmdList(ctx context.Context, args []string) error {
 		return err
 	}
 
-	discoverer := &gallery.Discoverer{
-		Fetcher:      client,
-		Creds:        creds,
-		AlbumURLBase: cfg.Account.AlbumURLBase,
-		Excluded:     cfg.Albums.IsExcluded,
-	}
-	albums, skips, err := discoverer.Discover(ctx, time.Now())
+	albums, indexes, skips, err := discoverAndSync(ctx, client, creds, cfg)
 	if err != nil {
 		return err
 	}
 
-	// Sync the file index too, so the listing reflects exactly what a
-	// build would publish, and so the first walk's cost lands here where
-	// the user can see it rather than being a surprise later. The cache
-	// makes subsequent runs cheap.
-	syncer := &gallery.Syncer{Files: client, CacheDir: cfg.Cache}
 	counts := make([]albumCounts, len(albums))
 	for i, album := range albums {
-		index, err := syncer.SyncAlbum(ctx, album)
-		if err != nil {
-			return err
-		}
-		for _, f := range index.Files {
+		for _, f := range indexes[album.ID].Files {
 			counts[i].files++
 			if f.Lat != nil {
 				counts[i].geo++
@@ -324,6 +313,83 @@ func cmdList(ctx context.Context, args []string) error {
 
 	printAlbums(albums, counts)
 	printSkips(skips, *verbose)
+	return nil
+}
+
+// discoverAndSync is the pipeline every publishing command shares: find the
+// publishable albums, then bring each one's file index up to date. It returns
+// the albums, their indexes keyed by collection ID, and the discovery skips
+// for whoever wants to report them.
+func discoverAndSync(ctx context.Context, client *enteapi.Client, creds *enteapi.Credentials, cfg *config.Config) ([]gallery.Album, map[int64]*gallery.FileIndex, []gallery.Skip, error) {
+	albums, skips, err := (&gallery.Discoverer{
+		Fetcher:      client,
+		Creds:        creds,
+		AlbumURLBase: cfg.Account.AlbumURLBase,
+		Excluded:     cfg.Albums.IsExcluded,
+	}).Discover(ctx, time.Now())
+	if err != nil {
+		return nil, nil, nil, err
+	}
+
+	syncer := &gallery.Syncer{Files: client, CacheDir: cfg.Cache}
+	indexes := make(map[int64]*gallery.FileIndex, len(albums))
+	for _, album := range albums {
+		index, err := syncer.SyncAlbum(ctx, album)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		indexes[album.ID] = index
+	}
+	return albums, indexes, skips, nil
+}
+
+// cmdBuild generates the site: discovery, file sync, cover thumbnails, and
+// the index page itself.
+func cmdBuild(ctx context.Context, args []string) error {
+	fs := flag.NewFlagSet("build", flag.ContinueOnError)
+	var common commonFlags
+	common.register(fs)
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+
+	cfg, err := config.Load(common.configPath)
+	if err != nil {
+		return err
+	}
+	creds, client, err := sessionClient(common, cfg)
+	if err != nil {
+		return err
+	}
+
+	albums, indexes, skips, err := discoverAndSync(ctx, client, creds, cfg)
+	if err != nil {
+		return err
+	}
+	printSkips(skips, false)
+
+	covers := &gallery.Covers{Fetcher: client, Dir: filepath.Join(cfg.Output, "thumbs")}
+	coverFailures := 0
+	for _, album := range albums {
+		if err := covers.Sync(ctx, album, indexes[album.ID]); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: cover for %q: %v (the album will use a placeholder)\n", album.Name, err)
+			coverFailures++
+		}
+	}
+
+	site := render.Assemble(cfg, cfg.Output, albums, indexes)
+	if err := render.Render(cfg.Output, site); err != nil {
+		return err
+	}
+
+	fmt.Printf("Built %s: %d album(s)", cfg.Output, len(site.Cards))
+	if site.Map != nil {
+		fmt.Printf(", %d map point(s)", len(site.Points))
+	}
+	if coverFailures > 0 {
+		fmt.Printf(", %d cover(s) failed", coverFailures)
+	}
+	fmt.Println()
 	return nil
 }
 
@@ -384,26 +450,15 @@ func cmdCovers(ctx context.Context, args []string) error {
 		return err
 	}
 
-	albums, _, err := (&gallery.Discoverer{
-		Fetcher:      client,
-		Creds:        creds,
-		AlbumURLBase: cfg.Account.AlbumURLBase,
-		Excluded:     cfg.Albums.IsExcluded,
-	}).Discover(ctx, time.Now())
+	albums, indexes, _, err := discoverAndSync(ctx, client, creds, cfg)
 	if err != nil {
 		return err
 	}
 
-	syncer := &gallery.Syncer{Files: client, CacheDir: cfg.Cache}
 	covers := &gallery.Covers{Fetcher: client, Dir: filepath.Join(cfg.Output, "thumbs")}
 
 	failed := 0
 	for _, album := range albums {
-		index, err := syncer.SyncAlbum(ctx, album)
-		if err != nil {
-			return err
-		}
-
 		coverPath := filepath.Join(covers.Dir, fmt.Sprintf("%d.jpg", album.ID))
 		if *refresh {
 			if err := os.Remove(coverPath); err != nil && !errors.Is(err, os.ErrNotExist) {
@@ -411,7 +466,7 @@ func cmdCovers(ctx context.Context, args []string) error {
 			}
 		}
 
-		if err := covers.Sync(ctx, album, index); err != nil {
+		if err := covers.Sync(ctx, album, indexes[album.ID]); err != nil {
 			fmt.Fprintf(os.Stderr, "  %s: %v\n", album.Name, err)
 			failed++
 			continue

@@ -1,0 +1,72 @@
+# ente-public-galleries configuration.
+#
+# Everything here is optional: Ente itself is the source of truth for album
+# titles, descriptions and covers, so a config file exists only to override
+# it, exclude albums, and say where output goes. This file documents every
+# key with its default. Copy to config.yaml and edit.
+#
+# Unknown keys are errors, so a typo cannot silently disable a setting.
+
+account:
+  # The address to log in as. Given here, `login` will not prompt for it.
+  email: you@example.com
+
+  # Override the API server. Only needed for self-hosted Ente; the default
+  # is the hosted service.
+  # api: https://api.ente.com
+
+  # Rewrite the host of the links Ente reports, for serving albums from a
+  # custom domain. Leave unset to use the links exactly as Ente reports them.
+  # album_url_base: https://albums.ente.com
+
+# Keep the session encryption key in this 0600 file instead of the OS keyring.
+# For machines without a keyring daemon - any headless box. Weaker: anything
+# able to read this file and the session file can use your Ente account.
+# device_key_file: ~/.config/ente-public-galleries/device.key
+
+# Where the generated site is written.
+# output: ./out
+
+# Where the per-album file indexes live. Deleting it costs a re-walk of every
+# album, nothing else.
+# cache: ./.cache
+
+site:
+  # Page title and footer text.
+  # title: Galleries
+  # footer: All photos on Ente
+
+map:
+  # Set false to leave the map out entirely.
+  # enabled: true
+
+  # What each dot represents. "albums" is one dot per album at the centre of
+  # its photos. "photos" is one dot per geotagged photo - note this publishes
+  # the location of every photo to anyone who loads the page, so it is
+  # opt-in. "none" disables the map.
+  # points: albums
+
+  # The tile server the map loads its pictures from. Point this at your own
+  # tileserver if you would rather visitors' IPs went nowhere near a third
+  # party.
+  # tiles: https://tile.openstreetmap.org/{z}/{x}/{y}.png
+  # attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+
+  # Where the Leaflet library itself comes from. Defaults to a CDN; pointing
+  # these at self-hosted copies removes the last third party from the page.
+  # leaflet_js: https://unpkg.com/leaflet@1.9.4/dist/leaflet.js
+  # leaflet_css: https://unpkg.com/leaflet@1.9.4/dist/leaflet.css
+
+albums:
+  # Ente collection IDs to leave off the page. `list` shows each album's ID.
+  # exclude: [1234567890]
+
+  # IDs pinned to the front of the page, in this order. Everything else
+  # follows Ente's own album ordering.
+  # order: [1234567890, 987654321]
+
+  # Per-album overrides, keyed by collection ID. Empty fields defer to Ente.
+  # overrides:
+  #   1234567890:
+  #     title: A Nicer Title
+  #     description: Words the album's own caption does not say

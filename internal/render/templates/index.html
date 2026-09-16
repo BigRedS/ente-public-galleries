@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{.Title}}</title>
+  <link rel="stylesheet" href="style.css">
+  {{if .Map}}<link rel="stylesheet" href="{{.Map.LeafletCSS}}">
+  <script defer src="{{.Map.LeafletJS}}"></script>{{end}}
+</head>
+<body>
+  <header>
+    <h1>{{.Title}}</h1>
+    {{if .Footer}}<p class="footer">{{.Footer}}</p>{{end}}
+  </header>
+
+  <main>
+    {{if .Map}}
+    <div id="map" aria-label="Map of album locations"></div>
+    {{end}}
+
+    <div class="grid">
+      {{range .Cards}}
+      <a class="card" href="{{.ShareURL}}">
+        {{if .HasThumb}}
+        <img loading="lazy" src="{{.ThumbPath}}" alt="Cover photo of {{.Name}}">
+        {{else}}
+        <div class="placeholder" aria-hidden="true"></div>
+        {{end}}
+        <div class="meta">
+          <h2>{{.Name}}</h2>
+          {{if .Description}}<p>{{.Description}}</p>{{end}}
+          <p class="detail">
+            {{if .FileCount}}{{.FileCount}} photo{{if ne .FileCount 1}}s{{end}}{{end}}
+            {{if .Password}}<span class="badge" title="Visitors will be asked for this album's password">password</span>{{end}}
+            {{if .Expires}}<span class="badge" title="This album's public link stops working on this date">expires {{.Expires}}</span>{{end}}
+          </p>
+        </div>
+      </a>
+      {{else}}
+      <p class="empty">No public albums yet.</p>
+      {{end}}
+    </div>
+  </main>
+
+  {{if .Map}}
+  <script>
+    // The map only initialises once Leaflet has loaded, since Leaflet itself
+    // is deferred above.
+    window.addEventListener('load', () => {
+      fetch('points.json')
+        .then((response) => response.json())
+        .then(({ points }) => {
+          if (!points.length) return;
+          const map = L.map('map');
+          L.tileLayer('{{.Map.Tiles}}', {
+            attribution: '{{.Map.Attribution}}',
+            maxZoom: 19,
+          }).addTo(map);
+          const group = L.featureGroup();
+          for (const point of points) {
+            L.circleMarker([point.lat, point.lon], { radius: 6 })
+              .addTo(group)
+              .bindPopup(`<a href="${point.url}">${point.name}</a>`);
+          }
+          group.addTo(map);
+          if (points.length === 1) {
+            map.setView([points[0].lat, points[0].lon], 10);
+          } else {
+            map.fitBounds(group.getBounds().pad(0.2));
+          }
+        })
+        .catch((error) => console.error('map data unavailable:', error));
+    });
+  </script>
+  {{end}}
+</body>
+</html>
