@@ -1,0 +1,12 @@
+# Compiled binary
+/ente-public-galleries
+
+# Generated site
+/out/
+
+# Incremental sync cache. Derived data only, safe to delete; see internal/gallery.
+/.cache/
+
+# Real config, as distinct from the committed config.yaml.example. Holds your
+# email and server details, so it stays out of git.
+/config.yaml

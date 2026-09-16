@@ -1,0 +1,33 @@
+ente-public-galleries
+Copyright (C) 2026 BigRedS
+
+This program is free software: you can redistribute it and/or modify it under
+the terms of the GNU Affero General Public License as published by the Free
+Software Foundation, either version 3 of the License, or (at your option) any
+later version. See LICENSE for the full text.
+
+
+Third-party code included in this repository
+============================================
+
+Ente (https://github.com/ente-io/ente)
+Copyright (C) Ente Technologies, Inc.
+Licensed under the GNU Affero General Public License v3.0.
+
+The following files are copied from Ente's Go CLI, taken from repository HEAD
+f3488d3ace21b523d93dacc19ad21c6d14db9586 (2026-09-16):
+
+  internal/crypto/crypto.go         <- cli/internal/crypto/crypto.go
+  internal/crypto/crypto_native.go  <- cli/internal/crypto/crypto_native.go
+  internal/crypto/stream.go         <- cli/internal/crypto/stream.go
+  internal/crypto/utils.go          <- cli/internal/crypto/utils.go
+  internal/crypto/crypto_test.go    <- cli/internal/crypto/crypto_test.go
+  internal/encoding/encoding.go     <- cli/utils/encoding/encoding.go
+
+They are byte-for-byte copies apart from a single import path rewrite in
+internal/crypto/crypto_native.go, which points at this project's
+internal/encoding instead of Ente's. The doc.go files in those two packages are
+original to this project.
+
+Because Ente is AGPL-3.0 and this project incorporates that code, this project
+is AGPL-3.0 as well.
