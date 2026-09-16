@@ -83,6 +83,17 @@ type Discoverer struct {
 // Skips are returned rather than logged so the caller decides what "loudly"
 // means: an interactive run wants each expired link named, a cron run may want
 // a count. Ordering within each list is by album name.
+//
+// Discovery always fetches the full library rather than resuming from a
+// high-water mark, and that is deliberate: the server records a collection's
+// updation time when its files change (server/pkg/repo/file.go runs
+// "UPDATE collections SET updation_time" on every file insert) but not when
+// its public link is created, disabled or edited - those touch only the
+// public_collection_tokens table. An incremental discovery would therefore
+// never learn that a link appeared or died, and link state is the one thing
+// this tool cannot be wrong about. The full fetch is a single small,
+// unpaginated response; the expensive part - the file walks - is cached
+// per album by Syncer.
 func (d *Discoverer) Discover(ctx context.Context, now time.Time) ([]Album, []Skip, error) {
 	raw, err := d.Fetcher.GetCollections(ctx, 0)
 	if err != nil {

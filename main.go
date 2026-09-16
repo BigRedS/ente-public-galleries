@@ -349,6 +349,7 @@ func cmdBuild(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("build", flag.ContinueOnError)
 	var common commonFlags
 	common.register(fs)
+	refresh := fs.Bool("refresh", false, "discard the cached file indexes and cover thumbnails, then rebuild everything from scratch")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -360,6 +361,22 @@ func cmdBuild(ctx context.Context, args []string) error {
 	creds, client, err := sessionClient(common, cfg)
 	if err != nil {
 		return err
+	}
+
+	if *refresh {
+		// Both of these are derived data: discarding them costs a full
+		// re-walk and re-download, and nothing else. That is exactly
+		// what a from-scratch rebuild means; discovery itself is always
+		// full and needs no resetting.
+		for _, dir := range []string{
+			filepath.Join(cfg.Cache, "albums"),
+			filepath.Join(cfg.Output, "thumbs"),
+		} {
+			if err := os.RemoveAll(dir); err != nil {
+				return err
+			}
+		}
+		fmt.Fprintf(os.Stderr, "Refresh: discarded cached file indexes and cover thumbnails.\n")
 	}
 
 	albums, indexes, skips, err := discoverAndSync(ctx, client, creds, cfg)
