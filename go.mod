@@ -15,5 +15,6 @@ require (
 	al.essio.dev/pkg/shellescape v1.5.1 // indirect
 	github.com/danieljoos/wincred v1.2.2 // indirect
 	github.com/godbus/dbus/v5 v5.1.0 // indirect
+	github.com/mr-tron/base58 v1.3.0 // indirect
 	golang.org/x/sys v0.36.0 // indirect
 )

@@ -14,11 +14,15 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"sort"
 	"strings"
 	"syscall"
+	"text/tabwriter"
+	"time"
 
 	"github.com/BigRedS/ente-public-galleries/internal/config"
 	"github.com/BigRedS/ente-public-galleries/internal/enteapi"
+	"github.com/BigRedS/ente-public-galleries/internal/gallery"
 	"github.com/BigRedS/ente-public-galleries/internal/prompt"
 	"github.com/BigRedS/ente-public-galleries/internal/session"
 )
@@ -53,6 +57,7 @@ Commands:
   login    Authenticate with Ente and save a session
   logout   Discard the saved session and its device key
   whoami   Show who the saved session belongs to
+  list     Show the albums that would be published
 
 Run a command with -h for its flags.
 `
@@ -74,6 +79,8 @@ func run(args []string) error {
 		return cmdLogout(rest)
 	case "whoami":
 		return cmdWhoami(ctx, rest)
+	case "list":
+		return cmdList(ctx, rest)
 	case "-h", "--help", "help":
 		fmt.Print(usage)
 		return nil
@@ -240,4 +247,130 @@ func cmdWhoami(ctx context.Context, args []string) error {
 
 func userAgent() string {
 	return "ente-public-galleries/" + version
+}
+
+func cmdList(ctx context.Context, args []string) error {
+	fs := flag.NewFlagSet("list", flag.ContinueOnError)
+	var common commonFlags
+	common.register(fs)
+	verbose := fs.Bool("v", false, "list every skipped album and why, instead of a summary")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+
+	cfg, err := config.Load(common.configPath)
+	if err != nil {
+		return err
+	}
+	creds, client, err := sessionClient(common, cfg)
+	if err != nil {
+		return err
+	}
+
+	discoverer := &gallery.Discoverer{
+		Fetcher:      client,
+		Creds:        creds,
+		AlbumURLBase: cfg.Account.AlbumURLBase,
+		Excluded:     cfg.Albums.IsExcluded,
+	}
+	albums, skips, err := discoverer.Discover(ctx, time.Now())
+	if err != nil {
+		return err
+	}
+
+	printAlbums(albums)
+	printSkips(skips, *verbose)
+	return nil
+}
+
+// sessionClient loads the saved session and returns it alongside an
+// authenticated client pointed at the server that session came from.
+//
+// The session's server wins over the config's when they disagree: the session's
+// keys only decrypt collections from the server they came from, so asking the
+// configured server with them would produce nonsense rather than an obvious
+// error.
+func sessionClient(common commonFlags, cfg *config.Config) (*enteapi.Credentials, *enteapi.Client, error) {
+	store, err := common.store()
+	if err != nil {
+		return nil, nil, err
+	}
+	creds, endpoint, err := store.Load()
+	if err != nil {
+		return nil, nil, err
+	}
+
+	if cfg.Account.API != "" && cfg.Account.API != endpoint {
+		fmt.Fprintf(os.Stderr,
+			"Warning: config names %s but the saved session is from %s; using the session's server. Re-login to switch.\n",
+			cfg.Account.API, endpoint)
+	}
+
+	client := enteapi.New(endpoint, userAgent())
+	client.SetToken(creds.TokenHeader())
+	return creds, client, nil
+}
+
+func printAlbums(albums []gallery.Album) {
+	if len(albums) == 0 {
+		fmt.Println("No publishable albums found.")
+		return
+	}
+
+	w := tabwriter.NewWriter(os.Stdout, 2, 8, 2, ' ', 0)
+	fmt.Fprintln(w, "ID\tNAME\tEXPIRES\tLINK")
+	for _, a := range albums {
+		expires := "-"
+		if !a.Expires.IsZero() {
+			expires = a.Expires.Format("2006-01-02")
+		}
+		fmt.Fprintf(w, "%d\t%s%s\t%s\t%s\n", a.ID, a.Name, notesFor(a), expires, a.ShareURL)
+	}
+	w.Flush()
+
+	fmt.Fprintf(os.Stderr, "\n%d album(s) publishable.\n", len(albums))
+}
+
+// notesFor renders the in-table annotations: a password flag for albums whose
+// visitors will meet a prompt, and a description snippet where one exists.
+func notesFor(a gallery.Album) string {
+	notes := ""
+	if a.PasswordProtected {
+		notes += " [password]"
+	}
+	if a.Description != "" {
+		snippet := []rune(a.Description)
+		if len(snippet) > 40 {
+			snippet = append(snippet[:40], []rune("...")...)
+		}
+		notes += " (" + string(snippet) + ")"
+	}
+	return notes
+}
+
+func printSkips(skips []gallery.Skip, verbose bool) {
+	if len(skips) == 0 {
+		return
+	}
+
+	fmt.Fprintln(os.Stderr, "Not published:")
+	if verbose {
+		for _, s := range skips {
+			fmt.Fprintf(os.Stderr, "  %-8d %s: %s\n", s.ID, s.Name, s.Reason)
+		}
+		fmt.Fprintln(os.Stderr)
+	}
+
+	byReason := make(map[string]int)
+	for _, s := range skips {
+		byReason[s.Reason]++
+	}
+	reasons := make([]string, 0, len(byReason))
+	for reason := range byReason {
+		reasons = append(reasons, reason)
+	}
+	sort.Strings(reasons)
+	for _, reason := range reasons {
+		fmt.Fprintf(os.Stderr, "  %d %s\n", byReason[reason], reason)
+	}
 }
