@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"sort"
 	"strings"
 	"syscall"
@@ -58,6 +59,7 @@ Commands:
   logout   Discard the saved session and its device key
   whoami   Show who the saved session belongs to
   list     Show the albums that would be published
+  covers   Fetch cover thumbnails for the publishable albums
 
 Run a command with -h for its flags.
 `
@@ -81,6 +83,8 @@ func run(args []string) error {
 		return cmdWhoami(ctx, rest)
 	case "list":
 		return cmdList(ctx, rest)
+	case "covers":
+		return cmdCovers(ctx, rest)
 	case "-h", "--help", "help":
 		fmt.Print(usage)
 		return nil
@@ -355,6 +359,73 @@ func sessionClient(common commonFlags, cfg *config.Config) (*enteapi.Credentials
 	client := enteapi.New(endpoint, userAgent())
 	client.SetToken(creds.TokenHeader())
 	return creds, client, nil
+}
+
+// cmdCovers exists because the thumbnail path is the least-trusted part of
+// the pipeline: it is the piece where server, storage and crypto all have to
+// agree, and where an earlier design expected trouble. It runs exactly what
+// build will run, and stops before rendering, so a failure here is a failure
+// in fetching and nothing else.
+func cmdCovers(ctx context.Context, args []string) error {
+	fs := flag.NewFlagSet("covers", flag.ContinueOnError)
+	var common commonFlags
+	common.register(fs)
+	refresh := fs.Bool("refresh", false, "refetch covers even when fresh on disk")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+
+	cfg, err := config.Load(common.configPath)
+	if err != nil {
+		return err
+	}
+	creds, client, err := sessionClient(common, cfg)
+	if err != nil {
+		return err
+	}
+
+	albums, _, err := (&gallery.Discoverer{
+		Fetcher:      client,
+		Creds:        creds,
+		AlbumURLBase: cfg.Account.AlbumURLBase,
+		Excluded:     cfg.Albums.IsExcluded,
+	}).Discover(ctx, time.Now())
+	if err != nil {
+		return err
+	}
+
+	syncer := &gallery.Syncer{Files: client, CacheDir: cfg.Cache}
+	covers := &gallery.Covers{Fetcher: client, Dir: filepath.Join(cfg.Output, "thumbs")}
+
+	failed := 0
+	for _, album := range albums {
+		index, err := syncer.SyncAlbum(ctx, album)
+		if err != nil {
+			return err
+		}
+
+		coverPath := filepath.Join(covers.Dir, fmt.Sprintf("%d.jpg", album.ID))
+		if *refresh {
+			if err := os.Remove(coverPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+				return err
+			}
+		}
+
+		if err := covers.Sync(ctx, album, index); err != nil {
+			fmt.Fprintf(os.Stderr, "  %s: %v\n", album.Name, err)
+			failed++
+			continue
+		}
+		if info, err := os.Stat(coverPath); err == nil {
+			fmt.Printf("  %-40s %s (%d bytes)\n", album.Name, coverPath, info.Size())
+		}
+	}
+
+	fmt.Fprintf(os.Stderr, "%d album(s), %d cover failure(s).\n", len(albums), failed)
+	if failed > 0 {
+		return fmt.Errorf("%d of %d covers failed; run with the failures above for detail", failed, len(albums))
+	}
+	return nil
 }
 
 func printAlbums(albums []gallery.Album, counts []albumCounts) {
