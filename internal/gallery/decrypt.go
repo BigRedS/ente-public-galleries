@@ -35,6 +35,17 @@ func CollectionKey(c enteapi.Collection, creds *enteapi.Credentials) ([]byte, er
 	return crypto.SealedBoxOpen(sealedKey, creds.PublicKey, creds.SecretKey)
 }
 
+// CollectionName returns a collection's decrypted display name, whatever its
+// sharing state. Unlike the discovery path, this works for albums with no
+// public link at all, which is what tools that act on the whole library need.
+func CollectionName(c enteapi.Collection, creds *enteapi.Credentials) (string, error) {
+	key, err := CollectionKey(c, creds)
+	if err != nil {
+		return "", err
+	}
+	return decryptName(c, key)
+}
+
 // decryptName recovers a collection's display name.
 //
 // Accounts from the early beta store names in the clear, so an absent

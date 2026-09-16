@@ -21,6 +21,7 @@ import (
 	"text/tabwriter"
 	"time"
 
+	"github.com/BigRedS/ente-public-galleries/internal/cli"
 	"github.com/BigRedS/ente-public-galleries/internal/config"
 	"github.com/BigRedS/ente-public-galleries/internal/enteapi"
 	"github.com/BigRedS/ente-public-galleries/internal/gallery"
@@ -98,68 +99,21 @@ func run(args []string) error {
 	}
 }
 
-// commonFlags are the flags every command shares: where config and session
-// live, and how the device key is kept.
-type commonFlags struct {
-	configPath    string
-	sessionPath   string
-	deviceKeyFile string
-}
-
-func (f *commonFlags) register(fs *flag.FlagSet) {
-	fs.StringVar(&f.configPath, "config", "config.yaml",
-		"path to the config file; absent is fine, defaults are used")
-	fs.StringVar(&f.sessionPath, "session", "",
-		"path to the session file (default: the user config directory)")
-	fs.StringVar(&f.deviceKeyFile, "device-key-file", "",
-		"keep the session encryption key in this 0600 file instead of the OS keyring; weaker, for headless machines with no keyring daemon")
-}
-
-// store builds the session store. cfg may be nil for commands that have not
-// loaded a config, in which case only the flags apply.
-//
-// Device key precedence, first match wins: the --device-key-file flag for a
-// one-off, then ENTE_CLI_SECRETS_PATH to share the ente CLI's device key file
-// (the CLI's own headless fallback, so one key file serves both tools), then
-// the config's device_key_file, then the OS keyring.
-func (f *commonFlags) store(cfg *config.Config) (*session.Store, error) {
-	path := f.sessionPath
-	if path == "" {
-		var err error
-		if path, err = session.DefaultPath(); err != nil {
-			return nil, err
-		}
-	}
-
-	if f.deviceKeyFile != "" {
-		return &session.Store{Path: path, DeviceKeyFile: f.deviceKeyFile}, nil
-	}
-	if shared := os.Getenv("ENTE_CLI_SECRETS_PATH"); shared != "" {
-		return &session.Store{Path: path, SharedDeviceKeyFile: shared}, nil
-	}
-
-	deviceKeyFile := ""
-	if cfg != nil {
-		deviceKeyFile = cfg.DeviceKeyFile
-	}
-	return &session.Store{Path: path, DeviceKeyFile: deviceKeyFile}, nil
-}
-
 func cmdLogin(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("login", flag.ContinueOnError)
-	var common commonFlags
-	common.register(fs)
+	var flags cli.Flags
+	flags.Register(fs)
 	email := fs.String("email", "", "email address to log in as (default: account.email from config, else prompted)")
 	force := fs.Bool("force", false, "log in again even if a session already exists")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 
-	cfg, err := config.Load(common.configPath)
+	cfg, err := config.Load(flags.ConfigPath)
 	if err != nil {
 		return err
 	}
-	store, err := common.store(cfg)
+	store, err := flags.Store(cfg)
 	if err != nil {
 		return err
 	}
@@ -224,19 +178,19 @@ func cmdLogin(ctx context.Context, args []string) error {
 
 func cmdLogout(args []string) error {
 	fs := flag.NewFlagSet("logout", flag.ContinueOnError)
-	var common commonFlags
-	common.register(fs)
+	var flags cli.Flags
+	flags.Register(fs)
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	// The config is loaded even to log out, because the device key's
 	// location comes from it: logging out must remove the key wherever
 	// login actually put it.
-	cfg, err := config.Load(common.configPath)
+	cfg, err := config.Load(flags.ConfigPath)
 	if err != nil {
 		return err
 	}
-	store, err := common.store(cfg)
+	store, err := flags.Store(cfg)
 	if err != nil {
 		return err
 	}
@@ -254,17 +208,17 @@ func cmdLogout(args []string) error {
 
 func cmdWhoami(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("whoami", flag.ContinueOnError)
-	var common commonFlags
-	common.register(fs)
+	var flags cli.Flags
+	flags.Register(fs)
 	offline := fs.Bool("offline", false, "report what the session file says without contacting the server")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	cfg, err := config.Load(common.configPath)
+	cfg, err := config.Load(flags.ConfigPath)
 	if err != nil {
 		return err
 	}
-	store, err := common.store(cfg)
+	store, err := flags.Store(cfg)
 	if err != nil {
 		return err
 	}
@@ -294,18 +248,18 @@ func userAgent() string {
 
 func cmdList(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("list", flag.ContinueOnError)
-	var common commonFlags
-	common.register(fs)
+	var flags cli.Flags
+	flags.Register(fs)
 	verbose := fs.Bool("v", false, "list every skipped album and why, instead of a summary")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 
-	cfg, err := config.Load(common.configPath)
+	cfg, err := config.Load(flags.ConfigPath)
 	if err != nil {
 		return err
 	}
-	creds, client, err := sessionClient(common, cfg)
+	creds, client, err := cli.Session(flags, cfg, userAgent())
 	if err != nil {
 		return err
 	}
@@ -361,18 +315,18 @@ func discoverAndSync(ctx context.Context, client *enteapi.Client, creds *enteapi
 // the index page itself.
 func cmdBuild(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("build", flag.ContinueOnError)
-	var common commonFlags
-	common.register(fs)
+	var flags cli.Flags
+	flags.Register(fs)
 	refresh := fs.Bool("refresh", false, "discard the cached file indexes and cover thumbnails, then rebuild everything from scratch")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 
-	cfg, err := config.Load(common.configPath)
+	cfg, err := config.Load(flags.ConfigPath)
 	if err != nil {
 		return err
 	}
-	creds, client, err := sessionClient(common, cfg)
+	creds, client, err := cli.Session(flags, cfg, userAgent())
 	if err != nil {
 		return err
 	}
@@ -430,34 +384,6 @@ type albumCounts struct {
 	geo   int
 }
 
-// sessionClient loads the saved session and returns it alongside an
-// authenticated client pointed at the server that session came from.
-//
-// The session's server wins over the config's when they disagree: the session's
-// keys only decrypt collections from the server they came from, so asking the
-// configured server with them would produce nonsense rather than an obvious
-// error.
-func sessionClient(common commonFlags, cfg *config.Config) (*enteapi.Credentials, *enteapi.Client, error) {
-	store, err := common.store(cfg)
-	if err != nil {
-		return nil, nil, err
-	}
-	creds, endpoint, err := store.Load()
-	if err != nil {
-		return nil, nil, err
-	}
-
-	if cfg.Account.API != "" && cfg.Account.API != endpoint {
-		fmt.Fprintf(os.Stderr,
-			"Warning: config names %s but the saved session is from %s; using the session's server. Re-login to switch.\n",
-			cfg.Account.API, endpoint)
-	}
-
-	client := enteapi.New(endpoint, userAgent())
-	client.SetToken(creds.TokenHeader())
-	return creds, client, nil
-}
-
 // cmdCovers exists because the thumbnail path is the least-trusted part of
 // the pipeline: it is the piece where server, storage and crypto all have to
 // agree, and where an earlier design expected trouble. It runs exactly what
@@ -465,18 +391,18 @@ func sessionClient(common commonFlags, cfg *config.Config) (*enteapi.Credentials
 // in fetching and nothing else.
 func cmdCovers(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("covers", flag.ContinueOnError)
-	var common commonFlags
-	common.register(fs)
+	var flags cli.Flags
+	flags.Register(fs)
 	refresh := fs.Bool("refresh", false, "refetch covers even when fresh on disk")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 
-	cfg, err := config.Load(common.configPath)
+	cfg, err := config.Load(flags.ConfigPath)
 	if err != nil {
 		return err
 	}
-	creds, client, err := sessionClient(common, cfg)
+	creds, client, err := cli.Session(flags, cfg, userAgent())
 	if err != nil {
 		return err
 	}

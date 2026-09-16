@@ -31,6 +31,21 @@ discards the local caches and rebuilds from scratch.
 
 ## Commands
 
+Bulk visibility changes are a separate tool in the same module:
+
+    go build -o gallery-visibility ./cmd/gallery-visibility
+    ./gallery-visibility '^\d{4}-\d{2} '            # show what matches
+    ./gallery-visibility -make-public '^\d{4}-\d{2} '  # after a typed confirmation
+    ./gallery-visibility -make-private '...'
+
+It matches Go RE2 against decrypted album titles and is read-only unless a
+switch is given. Two things to know before using it: making an album private
+disables its link permanently (re-publishing mints a new URL, so previously
+shared links die), and links it creates are unrestricted — no password, no
+expiry, no device limit, matching Ente's own defaults.
+
+## Commands
+
     login    Authenticate and save a session (use -force to replace one)
     logout   Discard the saved session and its device key
     whoami   Confirm the saved session works (--offline skips the check)

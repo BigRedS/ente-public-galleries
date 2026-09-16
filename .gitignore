@@ -1,5 +1,6 @@
-# Compiled binary
+# Compiled binaries
 /ente-public-galleries
+/gallery-visibility
 
 # Generated site
 /out/

@@ -332,9 +332,9 @@ func (s *Store) deviceKeyFromKeyring(create bool) (*[deviceKeySize]byte, error) 
 		}
 	default:
 		// Most often this is a headless box with no keyring daemon.
-		// Say so, and point at the escape hatch, rather than emitting
+		// Say so, and point at the escape hatches, rather than emitting
 		// a bare dbus error.
-		return nil, fmt.Errorf("cannot reach the OS keyring (%w); on a machine with no keyring daemon, pass --device-key-file to keep the device key in a 0600 file instead", err)
+		return nil, fmt.Errorf("cannot reach the OS keyring (%w); on a machine with no keyring daemon, set device_key_file in config.yaml, set ENTE_CLI_SECRETS_PATH to share the ente CLI's key, or pass --device-key-file", err)
 	}
 
 	key, err := newDeviceKey()

@@ -8,6 +8,19 @@ repo-specific part.
 
     go vet ./... && go test ./...
     go build -o ente-public-galleries .
+    go build -o gallery-visibility ./cmd/gallery-visibility
+
+There are two binaries: the site generator at the repo root, and the
+bulk public/private switcher in `cmd/gallery-visibility`. They share
+`internal/` packages and `internal/cli` (common flags, the device-key
+precedence, session loading) — if you touch the precedence, you are
+touching both binaries, which is why it lives in one place.
+
+`cmd/gallery-visibility` is the only code that mutates account state
+(`POST`/`DELETE /collections/share-url`). Keep it that way: it must
+stay read-only without an explicit switch, it must prompt (typed "yes")
+unless `-y`, and its scope is owned, non-deleted, album-type collections
+only. Mutating endpoints must never creep into the site generator.
 
 `gofmt -l .` always names `internal/crypto/stream.go`. That is expected and
 correct: it is a verbatim copy from Ente and is not gofmt-clean upstream.

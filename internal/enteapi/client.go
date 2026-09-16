@@ -111,6 +111,12 @@ func (c *Client) Post(ctx context.Context, path string, body, out any) error {
 	return c.do(ctx, http.MethodPost, path, nil, body, out)
 }
 
+// Delete issues a DELETE and decodes a JSON response into out, which may be
+// nil for endpoints that answer with an empty body.
+func (c *Client) Delete(ctx context.Context, path string, out any) error {
+	return c.do(ctx, http.MethodDelete, path, nil, nil, out)
+}
+
 func (c *Client) do(ctx context.Context, method, path string, query url.Values, body, out any) error {
 	var reader io.Reader
 	if body != nil {
