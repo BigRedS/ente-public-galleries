@@ -25,10 +25,14 @@ type Config struct {
 	// instead of the OS keyring. For machines without a keyring daemon,
 	// which is any headless box. A leading ~/ is expanded.
 	DeviceKeyFile string `yaml:"device_key_file"`
-	Output        string `yaml:"output"`
-	Site          Site   `yaml:"site"`
-	Map           Map    `yaml:"map"`
-	Albums        Albums `yaml:"albums"`
+	// Output is where the generated site is written.
+	Output string `yaml:"output"`
+	// Cache is where the per-album file indexes live. Deleting it costs a
+	// re-walk of every album, nothing else.
+	Cache  string `yaml:"cache"`
+	Site   Site   `yaml:"site"`
+	Map    Map    `yaml:"map"`
+	Albums Albums `yaml:"albums"`
 }
 
 // Account locates the Ente server and identifies who to log in as.
@@ -84,6 +88,7 @@ const (
 // Defaults, applied to any field the config file leaves unset.
 const (
 	defaultOutput      = "./out"
+	defaultCache       = "./.cache"
 	defaultTitle       = "Galleries"
 	defaultTiles       = "https://tile.openstreetmap.org/{z}/{x}/{y}.png"
 	defaultAttribution = `&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors`
@@ -122,8 +127,13 @@ func Load(path string) (*Config, error) {
 
 func (c *Config) applyDefaults() {
 	c.DeviceKeyFile = expandTilde(c.DeviceKeyFile)
+	c.Output = expandTilde(c.Output)
+	c.Cache = expandTilde(c.Cache)
 	if c.Output == "" {
 		c.Output = defaultOutput
+	}
+	if c.Cache == "" {
+		c.Cache = defaultCache
 	}
 	if c.Site.Title == "" {
 		c.Site.Title = defaultTitle

@@ -156,7 +156,7 @@ func TestDeviceKeyFileTildeEdgeCases(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 
-	cfg, err := Load(writeConfig(t, `device_key_file: "~"` + "\n"))
+	cfg, err := Load(writeConfig(t, `device_key_file: "~"`+"\n"))
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}

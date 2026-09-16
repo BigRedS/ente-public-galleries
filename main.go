@@ -299,9 +299,34 @@ func cmdList(ctx context.Context, args []string) error {
 		return err
 	}
 
-	printAlbums(albums)
+	// Sync the file index too, so the listing reflects exactly what a
+	// build would publish, and so the first walk's cost lands here where
+	// the user can see it rather than being a surprise later. The cache
+	// makes subsequent runs cheap.
+	syncer := &gallery.Syncer{Files: client, CacheDir: cfg.Cache}
+	counts := make([]albumCounts, len(albums))
+	for i, album := range albums {
+		index, err := syncer.SyncAlbum(ctx, album)
+		if err != nil {
+			return err
+		}
+		for _, f := range index.Files {
+			counts[i].files++
+			if f.Lat != nil {
+				counts[i].geo++
+			}
+		}
+	}
+
+	printAlbums(albums, counts)
 	printSkips(skips, *verbose)
 	return nil
+}
+
+// albumCounts is the per-album tally list prints.
+type albumCounts struct {
+	files int
+	geo   int
 }
 
 // sessionClient loads the saved session and returns it alongside an
@@ -332,20 +357,24 @@ func sessionClient(common commonFlags, cfg *config.Config) (*enteapi.Credentials
 	return creds, client, nil
 }
 
-func printAlbums(albums []gallery.Album) {
+func printAlbums(albums []gallery.Album, counts []albumCounts) {
 	if len(albums) == 0 {
 		fmt.Println("No publishable albums found.")
 		return
 	}
 
 	w := tabwriter.NewWriter(os.Stdout, 2, 8, 2, ' ', 0)
-	fmt.Fprintln(w, "ID\tNAME\tEXPIRES\tLINK")
-	for _, a := range albums {
+	fmt.Fprintln(w, "ID\tNAME\tEXPIRES\tFILES\tLINK")
+	for i, a := range albums {
 		expires := "-"
 		if !a.Expires.IsZero() {
 			expires = a.Expires.Format("2006-01-02")
 		}
-		fmt.Fprintf(w, "%d\t%s%s\t%s\t%s\n", a.ID, a.Name, notesFor(a), expires, a.ShareURL)
+		files := "-"
+		if i < len(counts) {
+			files = fmt.Sprintf("%d (%d geo)", counts[i].files, counts[i].geo)
+		}
+		fmt.Fprintf(w, "%d\t%s%s\t%s\t%s\t%s\n", a.ID, a.Name, notesFor(a), expires, files, a.ShareURL)
 	}
 	w.Flush()
 

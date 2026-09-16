@@ -100,3 +100,12 @@ func metaBool(m map[string]any, key string) (bool, bool) {
 	b, ok := v.(bool)
 	return b, ok
 }
+
+func metaFloat(m map[string]any, key string) (float64, bool) {
+	v, ok := m[key]
+	if !ok {
+		return 0, false
+	}
+	f, ok := v.(float64)
+	return f, ok
+}
