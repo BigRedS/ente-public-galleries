@@ -79,8 +79,29 @@ albums:
   # exclude: [1234567890]
 
   # IDs pinned to the front of the page, in this order. Everything else
-  # follows Ente's own album ordering.
+  # follows sort_by/sort_order below.
   # order: [1234567890, 987654321]
+
+  # What orders the (unpinned) albums: "date", "name" or "size" (photo
+  # count - Ente has no separate notion of an album's size). An album with
+  # no synced files yet always sorts last under "date", regardless of
+  # sort_order.
+  # sort_by: date
+
+  # "asc" or "desc", for whichever sort_by is set. Applies uniformly - e.g.
+  # sort_by: name with the default sort_order lists Z-A; set sort_order:
+  # asc for A-Z.
+  # sort_order: desc
+
+  # Which photo counts as "the album's date" when sort_by is "date". Ente
+  # has no per-album date, so this is derived: "first" or "last" photo
+  # taken, or the "midpoint" between them.
+  # date_source: last
+
+  # Draw a year heading above the first album of each new year. Only
+  # meaningful when sort_by is "date" - a name or size order scatters years
+  # across the page, so no heading is drawn there regardless of this.
+  # group_by_year: true
 
   # Per-album overrides, keyed by collection ID. Empty fields defer to Ente.
   # overrides:

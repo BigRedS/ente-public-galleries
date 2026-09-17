@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/BigRedS/ente-public-galleries/internal/config"
 	"github.com/BigRedS/ente-public-galleries/internal/gallery"
@@ -87,6 +88,10 @@ func (f *siteFixture) writeCover(t *testing.T, albumID int64) {
 func TestAssembleBuildsCardsAndAlbumPoints(t *testing.T) {
 	f := newSiteFixture(t)
 	f.writeCover(t, 1)
+	// This test is about card contents, not ordering; pin the sort so it
+	// doesn't depend on the default (date, descending) sort's behaviour.
+	f.cfg.Albums.SortBy = config.SortByName
+	f.cfg.Albums.SortOrder = config.SortAsc
 
 	site := Assemble(f.cfg, f.cfg.Output, f.albums, f.indexes)
 
@@ -221,11 +226,13 @@ func TestAssembleAppliesTitleRegex(t *testing.T) {
 	t.Errorf("points %v do not carry the cleaned title", site.Points)
 }
 
-// The alphabetical tiebreak sorts by what the page shows, not by the raw
-// Ente name, so a stripped date prefix cannot dominate the ordering.
+// Sorting by name sorts by what the page shows, not by the raw Ente name, so
+// a stripped date prefix cannot dominate the ordering.
 func TestAssembleSortsByCleanedName(t *testing.T) {
 	f := newSiteFixture(t)
 	f.loadCfgWith(t, `albums:
+  sort_by: name
+  sort_order: asc
   title_regex: 's/^\d\d\d\d-\d\d //'
 `)
 	f.albums = []gallery.Album{
@@ -242,12 +249,15 @@ func TestAssembleSortsByCleanedName(t *testing.T) {
 	}
 }
 
-func TestAssembleOrdersByConfigThenMagicOrderThenName(t *testing.T) {
+// Pinned config order always wins; everything else falls through to the
+// default sort (date, descending), and albums with no synced files yet
+// always trail the dated ones, tie-broken by name.
+func TestAssembleOrdersByConfigThenDateThenName(t *testing.T) {
 	f := newSiteFixture(t)
 	f.albums = append(f.albums,
-		gallery.Album{ID: 3, Name: "Zebra", ShareURL: "u3", SortOrder: 2},
-		gallery.Album{ID: 4, Name: "Aardvark", ShareURL: "u4", SortOrder: 1},
-		gallery.Album{ID: 5, Name: "Middle", ShareURL: "u5", SortOrder: 2},
+		gallery.Album{ID: 3, Name: "Zebra", ShareURL: "u3"},
+		gallery.Album{ID: 4, Name: "Aardvark", ShareURL: "u4"},
+		gallery.Album{ID: 5, Name: "Middle", ShareURL: "u5"},
 	)
 	// Pin album 2 (Ducati Centenary) to the front.
 	f.cfg.Albums.Order = []int64{2}
@@ -258,7 +268,10 @@ func TestAssembleOrdersByConfigThenMagicOrderThenName(t *testing.T) {
 	for _, card := range site.Cards {
 		names = append(names, card.Name)
 	}
-	want := []string{"Ducati Centenary", "Aardvark", "Middle", "Zebra", "Birthday Trackday"}
+	// Ducati Centenary is pinned; Birthday Trackday is the only other
+	// dated album (indexes only cover albums 1 and 2), so it comes next;
+	// the three undated albums trail, alphabetically.
+	want := []string{"Ducati Centenary", "Birthday Trackday", "Aardvark", "Middle", "Zebra"}
 	for i := range want {
 		if i >= len(names) {
 			t.Fatalf("fewer cards than expected: %v", names)
@@ -267,6 +280,270 @@ func TestAssembleOrdersByConfigThenMagicOrderThenName(t *testing.T) {
 			t.Errorf("position %d = %q, want %q (order: %v)", i, names[i], want[i], names)
 			break
 		}
+	}
+}
+
+// sort_by: name and sort_by: size both honour sort_order, with the
+// displayed name as the final tiebreak.
+func TestAssembleSortByNameAndSize(t *testing.T) {
+	f := newSiteFixture(t)
+	// Album 1 (Birthday Trackday) has 2 files, album 2 (Ducati Centenary) has 1.
+
+	f.cfg.Albums.SortBy = config.SortByName
+	f.cfg.Albums.SortOrder = config.SortAsc
+	site := Assemble(f.cfg, f.cfg.Output, f.albums, f.indexes)
+	if got := []string{site.Cards[0].Name, site.Cards[1].Name}; got[0] != "Birthday Trackday" || got[1] != "Ducati Centenary" {
+		t.Errorf("name asc order = %v, want Birthday Trackday, Ducati Centenary", got)
+	}
+
+	f.cfg.Albums.SortOrder = config.SortDesc
+	site = Assemble(f.cfg, f.cfg.Output, f.albums, f.indexes)
+	if got := []string{site.Cards[0].Name, site.Cards[1].Name}; got[0] != "Ducati Centenary" || got[1] != "Birthday Trackday" {
+		t.Errorf("name desc order = %v, want Ducati Centenary, Birthday Trackday", got)
+	}
+
+	f.cfg.Albums.SortBy = config.SortBySize
+	f.cfg.Albums.SortOrder = config.SortDesc
+	site = Assemble(f.cfg, f.cfg.Output, f.albums, f.indexes)
+	if got := []string{site.Cards[0].Name, site.Cards[1].Name}; got[0] != "Birthday Trackday" || got[1] != "Ducati Centenary" {
+		t.Errorf("size desc order = %v, want Birthday Trackday (2 photos), Ducati Centenary (1 photo)", got)
+	}
+}
+
+// date_source picks which end of the album's span counts as its date; the
+// difference only shows up when that changes which side of another album's
+// span it falls on.
+func TestAssembleDateSourceAffectsOrder(t *testing.T) {
+	f := newSiteFixture(t)
+	// Album 1 spans 1000-1001; give album 2 a wide, earlier-starting span
+	// that still ends after album 1's, so first/last/midpoint disagree.
+	f.indexes[2] = &gallery.FileIndex{Files: map[int64]gallery.FileSummary{
+		21: {ID: 21, CreationTime: 500},
+		22: {ID: 22, CreationTime: 1500},
+	}}
+	f.cfg.Albums.SortBy = config.SortByDate
+	f.cfg.Albums.SortOrder = config.SortAsc
+
+	f.cfg.Albums.DateSource = config.DateFirst
+	site := Assemble(f.cfg, f.cfg.Output, f.albums, f.indexes)
+	if site.Cards[0].Name != "Ducati Centenary" {
+		t.Errorf("date_source first: order = %v, want Ducati Centenary earliest (starts at 500)", cardNames(site))
+	}
+
+	f.cfg.Albums.DateSource = config.DateLast
+	site = Assemble(f.cfg, f.cfg.Output, f.albums, f.indexes)
+	if site.Cards[0].Name != "Birthday Trackday" {
+		t.Errorf("date_source last: order = %v, want Birthday Trackday earliest (ends at 1001)", cardNames(site))
+	}
+}
+
+func cardNames(site SiteData) []string {
+	var names []string
+	for _, c := range site.Cards {
+		names = append(names, c.Name)
+	}
+	return names
+}
+
+// Year headers only appear when sorting by date, in front of the first
+// album of each new year, and never on an undated album.
+func TestAssembleGroupsByYear(t *testing.T) {
+	f := newSiteFixture(t)
+	f.indexes[1].Files = map[int64]gallery.FileSummary{
+		11: {ID: 11, CreationTime: time.Date(2023, 6, 1, 0, 0, 0, 0, time.UTC).UnixMicro()},
+	}
+	f.indexes[2].Files = map[int64]gallery.FileSummary{
+		21: {ID: 21, CreationTime: time.Date(2024, 6, 1, 0, 0, 0, 0, time.UTC).UnixMicro()},
+	}
+	f.albums = append(f.albums, gallery.Album{ID: 3, Name: "No Files Yet", ShareURL: "u3"})
+	f.cfg.Albums.SortBy = config.SortByDate
+	f.cfg.Albums.SortOrder = config.SortAsc
+
+	site := Assemble(f.cfg, f.cfg.Output, f.albums, f.indexes)
+
+	var headers []string
+	for _, c := range site.Cards {
+		if c.ShowYearHeader {
+			headers = append(headers, c.Name)
+		}
+	}
+	want := []string{"Birthday Trackday", "Ducati Centenary"}
+	if len(headers) != len(want) || headers[0] != want[0] || headers[1] != want[1] {
+		t.Errorf("year headers on %v, want %v (cards: %v)", headers, want, cardNames(site))
+	}
+
+	// Disabling grouping drops every header.
+	disabled := false
+	f.cfg.Albums.GroupByYear = &disabled
+	site = Assemble(f.cfg, f.cfg.Output, f.albums, f.indexes)
+	for _, c := range site.Cards {
+		if c.ShowYearHeader {
+			t.Errorf("card %q has a year header despite group_by_year: false", c.Name)
+		}
+	}
+
+	// Sorting by name instead must not draw year headers even though
+	// grouping is on, since a name order scatters years across the page.
+	enabled := true
+	f.cfg.Albums.GroupByYear = &enabled
+	f.cfg.Albums.SortBy = config.SortByName
+	site = Assemble(f.cfg, f.cfg.Output, f.albums, f.indexes)
+	for _, c := range site.Cards {
+		if c.ShowYearHeader {
+			t.Errorf("card %q has a year header while sorted by name", c.Name)
+		}
+	}
+}
+
+// Grouping splits the flat card list into one Group per year, each holding
+// only its own cards, with the trailing undated album folded into the last
+// group rather than starting a heading-less one of its own.
+func TestAssembleGroupsSplitCardsPerYear(t *testing.T) {
+	f := newSiteFixture(t)
+	f.indexes[1].Files = map[int64]gallery.FileSummary{
+		11: {ID: 11, CreationTime: time.Date(2023, 6, 1, 0, 0, 0, 0, time.UTC).UnixMicro()},
+	}
+	f.indexes[2].Files = map[int64]gallery.FileSummary{
+		21: {ID: 21, CreationTime: time.Date(2024, 6, 1, 0, 0, 0, 0, time.UTC).UnixMicro()},
+	}
+	f.albums = append(f.albums, gallery.Album{ID: 3, Name: "No Files Yet", ShareURL: "u3"})
+	f.cfg.Albums.SortBy = config.SortByDate
+	f.cfg.Albums.SortOrder = config.SortAsc
+
+	site := Assemble(f.cfg, f.cfg.Output, f.albums, f.indexes)
+
+	if len(site.Groups) != 2 {
+		t.Fatalf("got %d groups, want 2: %+v", len(site.Groups), site.Groups)
+	}
+	if site.Groups[0].Year != 2023 || len(site.Groups[0].Cards) != 1 || site.Groups[0].Cards[0].Name != "Birthday Trackday" {
+		t.Errorf("group 0 = %+v, want year 2023 with just Birthday Trackday", site.Groups[0])
+	}
+	if site.Groups[1].Year != 2024 || len(site.Groups[1].Cards) != 2 {
+		t.Errorf("group 1 = %+v, want year 2024 with 2 cards (Ducati Centenary + the undated trailer)", site.Groups[1])
+	}
+	if names := []string{site.Groups[1].Cards[0].Name, site.Groups[1].Cards[1].Name}; names[0] != "Ducati Centenary" || names[1] != "No Files Yet" {
+		t.Errorf("group 1 cards = %v, want Ducati Centenary then No Files Yet", names)
+	}
+
+	// With grouping off, everything lands in a single heading-less group.
+	disabled := false
+	f.cfg.Albums.GroupByYear = &disabled
+	site = Assemble(f.cfg, f.cfg.Output, f.albums, f.indexes)
+	if len(site.Groups) != 1 || site.Groups[0].Year != 0 || len(site.Groups[0].Cards) != 3 {
+		t.Errorf("ungrouped Groups = %+v, want one heading-less group of 3", site.Groups)
+	}
+}
+
+// No albums at all yields no groups, so the template falls back to its
+// empty-state message instead of rendering a blank grid.
+func TestAssembleGroupsEmptyWhenNoAlbums(t *testing.T) {
+	f := newSiteFixture(t)
+	f.albums = nil
+	f.indexes = nil
+
+	site := Assemble(f.cfg, f.cfg.Output, f.albums, f.indexes)
+	if len(site.Groups) != 0 {
+		t.Errorf("Groups = %+v, want none", site.Groups)
+	}
+}
+
+// The date range is the earliest and latest file in the album, and collapses
+// to a single date when every photo was taken the same day.
+func TestAssembleComputesDateRange(t *testing.T) {
+	f := newSiteFixture(t)
+	site := Assemble(f.cfg, f.cfg.Output, f.albums, f.indexes)
+
+	var first, second Card
+	for _, card := range site.Cards {
+		switch card.Name {
+		case "Birthday Trackday":
+			first = card
+		case "Ducati Centenary":
+			second = card
+		}
+	}
+
+	// Album 1 has two files a microsecond apart: same calendar day, so To
+	// is left empty rather than repeating From.
+	wantDay := time.UnixMicro(1000).Format("2 Jan 2006")
+	if first.From != wantDay || first.To != "" {
+		t.Errorf("album 1 range = %q..%q, want %q..\"\"", first.From, first.To, wantDay)
+	}
+
+	// Album 2 has a single file, so it too is a single day with no To.
+	if second.From == "" || second.To != "" {
+		t.Errorf("album 2 range = %q..%q, want a single date and no To", second.From, second.To)
+	}
+}
+
+// An album with no synced files yet (index nil, or absent from the map) gets
+// no date range rather than a zero-value date.
+func TestAssembleOmitsDateRangeWithoutFiles(t *testing.T) {
+	f := newSiteFixture(t)
+	f.albums = append(f.albums, gallery.Album{ID: 3, Name: "No Index Yet", ShareURL: "u3"})
+
+	site := Assemble(f.cfg, f.cfg.Output, f.albums, f.indexes)
+	for _, card := range site.Cards {
+		if card.Name == "No Index Yet" && (card.From != "" || card.To != "") {
+			t.Errorf("card with no index has dates %q..%q, want none", card.From, card.To)
+		}
+	}
+}
+
+// SearchName is the displayed name lowercased, computed after title cleanup
+// and overrides so the client-side search matches what a visitor reads.
+func TestAssembleSearchNameFollowsDisplayedName(t *testing.T) {
+	f := newSiteFixture(t)
+	f.cfg.Albums.Overrides = map[int64]config.Override{
+		2: {Title: "Centenary, Ducati"},
+	}
+
+	site := Assemble(f.cfg, f.cfg.Output, f.albums, f.indexes)
+	for _, card := range site.Cards {
+		if card.SearchName != strings.ToLower(card.Name) {
+			t.Errorf("card %q: SearchName = %q, want %q", card.Name, card.SearchName, strings.ToLower(card.Name))
+		}
+	}
+}
+
+// Each year group renders as its own <div class="grid">, with the heading
+// as a plain sibling between them - not a heading squeezed into one grid
+// cell of a single shared grid.
+func TestRenderSplitsGroupsIntoSeparateGrids(t *testing.T) {
+	f := newSiteFixture(t)
+	f.indexes[1].Files = map[int64]gallery.FileSummary{
+		11: {ID: 11, CreationTime: time.Date(2023, 6, 1, 0, 0, 0, 0, time.UTC).UnixMicro()},
+	}
+	f.indexes[2].Files = map[int64]gallery.FileSummary{
+		21: {ID: 21, CreationTime: time.Date(2024, 6, 1, 0, 0, 0, 0, time.UTC).UnixMicro()},
+	}
+	f.cfg.Albums.SortBy = config.SortByDate
+	f.cfg.Albums.SortOrder = config.SortAsc
+
+	site := Assemble(f.cfg, f.cfg.Output, f.albums, f.indexes)
+	if err := Render(f.cfg.Output, site); err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	index, err := os.ReadFile(filepath.Join(f.cfg.Output, "index.html"))
+	if err != nil {
+		t.Fatalf("reading index.html: %v", err)
+	}
+	page := string(index)
+
+	if got := strings.Count(page, `<div class="grid">`); got != 2 {
+		t.Errorf(`page has %d <div class="grid"> elements, want 2 (one per year)`, got)
+	}
+	firstHeader := strings.Index(page, `<h2 class="year-header">2023</h2>`)
+	secondHeader := strings.Index(page, `<h2 class="year-header">2024</h2>`)
+	firstGrid := strings.Index(page, `<div class="grid">`)
+	if firstHeader == -1 || secondHeader == -1 {
+		t.Fatalf("year headers missing from page")
+	}
+	if firstHeader > firstGrid {
+		t.Error("first year heading should come before its grid, not inside it")
+	}
+	if secondHeader < firstHeader {
+		t.Error("year headings out of order")
 	}
 }
 
@@ -293,6 +570,9 @@ func TestRenderWritesSite(t *testing.T) {
 		`src="thumbs/1.jpg"`,
 		"2 photos",
 		`id="map"`,
+		`id="search"`,
+		`data-name="birthday trackday"`,
+		"class=\"dates\"",
 	} {
 		if !strings.Contains(page, want) {
 			t.Errorf("index.html missing %q", want)

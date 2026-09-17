@@ -85,6 +85,19 @@ type Albums struct {
 	// page by accident.
 	TitleRegex string `yaml:"title_regex"`
 
+	// SortBy chooses what orders the (unpinned) albums: "date", "name" or
+	// "size" (photo count - Ente has no separate notion of album size).
+	SortBy string `yaml:"sort_by"`
+	// SortOrder is "asc" or "desc", applied whatever SortBy is.
+	SortOrder string `yaml:"sort_order"`
+	// DateSource picks which photo stands for "the album's date" when
+	// SortBy is "date": "first", "last" or "midpoint" between them. Ente
+	// itself has no per-album date.
+	DateSource string `yaml:"date_source"`
+	// GroupByYear draws a year heading above the first album of each new
+	// year. Only meaningful when SortBy is "date".
+	GroupByYear *bool `yaml:"group_by_year"`
+
 	// titleRe and friends are the compiled form of TitleRegex, set by
 	// Load. The zero value of Albums is safe to use without them.
 	titleRe          *regexp.Regexp
@@ -189,6 +202,26 @@ const (
 	PointsNone   = "none"
 )
 
+// Choices for Albums.SortBy.
+const (
+	SortByDate = "date"
+	SortByName = "name"
+	SortBySize = "size"
+)
+
+// Choices for Albums.SortOrder.
+const (
+	SortAsc  = "asc"
+	SortDesc = "desc"
+)
+
+// Choices for Albums.DateSource.
+const (
+	DateFirst    = "first"
+	DateLast     = "last"
+	DateMidpoint = "midpoint"
+)
+
 // Defaults, applied to any field the config file leaves unset.
 const (
 	defaultOutput      = "./out"
@@ -263,6 +296,21 @@ func (c *Config) applyDefaults() {
 	if c.Map.LeafletCSS == "" {
 		c.Map.LeafletCSS = defaultLeafletCSS
 	}
+	if c.Albums.SortBy == "" {
+		c.Albums.SortBy = SortByDate
+	}
+	if c.Albums.SortOrder == "" {
+		// One default regardless of SortBy: whoever wants A-Z or
+		// fewest-first sets sort_order: asc explicitly.
+		c.Albums.SortOrder = SortDesc
+	}
+	if c.Albums.DateSource == "" {
+		c.Albums.DateSource = DateLast
+	}
+	if c.Albums.GroupByYear == nil {
+		grouped := true
+		c.Albums.GroupByYear = &grouped
+	}
 }
 
 func (c *Config) validate() error {
@@ -271,6 +319,24 @@ func (c *Config) validate() error {
 	default:
 		return fmt.Errorf("map.points is %q, expected one of %q, %q or %q",
 			c.Map.Points, PointsAlbums, PointsPhotos, PointsNone)
+	}
+
+	switch c.Albums.SortBy {
+	case SortByDate, SortByName, SortBySize:
+	default:
+		return fmt.Errorf("albums.sort_by is %q, expected one of %q, %q or %q",
+			c.Albums.SortBy, SortByDate, SortByName, SortBySize)
+	}
+	switch c.Albums.SortOrder {
+	case SortAsc, SortDesc:
+	default:
+		return fmt.Errorf("albums.sort_order is %q, expected %q or %q", c.Albums.SortOrder, SortAsc, SortDesc)
+	}
+	switch c.Albums.DateSource {
+	case DateFirst, DateLast, DateMidpoint:
+	default:
+		return fmt.Errorf("albums.date_source is %q, expected one of %q, %q or %q",
+			c.Albums.DateSource, DateFirst, DateLast, DateMidpoint)
 	}
 
 	if c.Albums.TitleRegex != "" {
@@ -295,6 +361,12 @@ func (c *Config) validate() error {
 // the enabled flag and a points setting of "none".
 func (c *Config) MapEnabled() bool {
 	return c.Map.Enabled != nil && *c.Map.Enabled && c.Map.Points != PointsNone
+}
+
+// GroupByYearEnabled reports whether year headings should be drawn. It is
+// only meaningful when SortBy is "date"; callers check that separately.
+func (a *Albums) GroupByYearEnabled() bool {
+	return a.GroupByYear != nil && *a.GroupByYear
 }
 
 // IsExcluded reports whether an album has been explicitly excluded.

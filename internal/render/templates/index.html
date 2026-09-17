@@ -12,6 +12,9 @@
   <header>
     <h1>{{.Title}}</h1>
     {{if .Footer}}<p class="footer">{{.Footer}}</p>{{end}}
+    {{if .Cards}}
+    <input type="search" id="search" class="search" placeholder="Search galleries…" aria-label="Search galleries by name" autocomplete="off">
+    {{end}}
   </header>
 
   <main>
@@ -19,9 +22,12 @@
     <div id="map" aria-label="Map of album locations"></div>
     {{end}}
 
+    {{if .Groups}}
+    {{range .Groups}}
+    {{if .Year}}<h2 class="year-header">{{.Year}}</h2>{{end}}
     <div class="grid">
       {{range .Cards}}
-      <a class="card" href="{{.ShareURL}}">
+      <a class="card" href="{{.ShareURL}}" data-name="{{.SearchName}}">
         {{if .HasThumb}}
         <img loading="lazy" src="{{.ThumbPath}}" alt="Cover photo of {{.Name}}">
         {{else}}
@@ -30,6 +36,9 @@
         <div class="meta">
           <h2>{{.Name}}</h2>
           {{if .Description}}<p>{{.Description}}</p>{{end}}
+          {{if .From}}
+          <p class="dates">{{.From}}{{if .To}} &ndash; {{.To}}{{end}}</p>
+          {{end}}
           <p class="detail">
             {{if .FileCount}}{{.FileCount}} photo{{if ne .FileCount 1}}s{{end}}{{end}}
             {{if .Password}}<span class="badge" title="Visitors will be asked for this album's password">password</span>{{end}}
@@ -37,11 +46,43 @@
           </p>
         </div>
       </a>
-      {{else}}
-      <p class="empty">No public albums yet.</p>
       {{end}}
     </div>
+    {{end}}
+    {{else}}
+    <div class="grid"><p class="empty">No public albums yet.</p></div>
+    {{end}}
+    {{if .Cards}}
+    <p class="empty" id="no-matches" hidden>No galleries match your search.</p>
+    {{end}}
   </main>
+
+  {{if .Cards}}
+  <script>
+    // Filters cards client-side rather than re-rendering the page, since the
+    // whole card list is already in the DOM and there are never enough
+    // albums for this to be a performance concern.
+    (() => {
+      const input = document.getElementById('search');
+      const cards = Array.from(document.querySelectorAll('.grid .card'));
+      const yearHeaders = Array.from(document.querySelectorAll('.year-header'));
+      const noMatches = document.getElementById('no-matches');
+      input.addEventListener('input', () => {
+        const query = input.value.trim().toLowerCase();
+        // Year headers group the unfiltered list; once a search narrows
+        // it, which years remain is no longer a boundary worth drawing.
+        for (const header of yearHeaders) header.hidden = query.length > 0;
+        let visible = 0;
+        for (const card of cards) {
+          const matches = card.dataset.name.includes(query);
+          card.hidden = !matches;
+          if (matches) visible++;
+        }
+        noMatches.hidden = visible > 0;
+      });
+    })();
+  </script>
+  {{end}}
 
   {{if .Map}}
   <script>

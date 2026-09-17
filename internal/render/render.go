@@ -14,6 +14,8 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
+	"time"
 
 	"github.com/BigRedS/ente-public-galleries/internal/config"
 	"github.com/BigRedS/ente-public-galleries/internal/gallery"
@@ -43,6 +45,28 @@ type Card struct {
 	Expires   string
 	Password  bool
 	FileCount int
+	// From and To are the earliest and latest photo dates in the album,
+	// pre-formatted; both empty when the album's index has no files yet.
+	// To is left empty (and From alone is shown) when the two coincide.
+	From string
+	To   string
+	// SearchName is the lowercased name the client-side search filters
+	// against, computed once here rather than in JS on every keystroke.
+	SearchName string
+	// Year is the album's sort-date year (per config.Albums.DateSource),
+	// 0 when the album has no files yet.
+	Year int
+	// ShowYearHeader marks the first card of a new year group; only ever
+	// set when sorting by date with grouping on.
+	ShowYearHeader bool
+}
+
+// CardGroup is a run of cards under one year heading, rendered as its own
+// grid. Year is 0 when the group has no heading (grouping off, or a
+// heading-less run of undated cards).
+type CardGroup struct {
+	Year  int
+	Cards []Card
 }
 
 // Point is one map marker.
@@ -59,6 +83,9 @@ type SiteData struct {
 	Footer string
 	Map    *MapData
 	Cards  []Card
+	// Groups is Cards split into per-year runs for the template to render
+	// as separate grids; see groupCards.
+	Groups []CardGroup
 	Points []Point
 }
 
@@ -81,7 +108,7 @@ func Assemble(cfg *config.Config, output string, albums []gallery.Album, indexes
 		}
 	}
 
-	ordered := orderAlbums(albums, cfg)
+	ordered := orderAlbums(albums, cfg, indexes)
 	for _, album := range ordered {
 		card := Card{
 			// The displayed title is the cleaned one; the map popups
@@ -108,9 +135,15 @@ func Assemble(cfg *config.Config, output string, albums []gallery.Album, indexes
 			}
 		}
 
+		card.SearchName = strings.ToLower(card.Name)
+
 		index := indexes[album.ID]
 		if index != nil {
 			card.FileCount = len(index.Files)
+			card.From, card.To = dateRange(index)
+			if d, ok := albumDate(index, cfg.Albums.DateSource); ok {
+				card.Year = d.Year()
+			}
 
 			switch {
 			case cfg.Map.Points == config.PointsAlbums:
@@ -137,6 +170,14 @@ func Assemble(cfg *config.Config, output string, albums []gallery.Album, indexes
 		site.Cards = append(site.Cards, card)
 	}
 
+	// Year headings only make sense alongside a date sort: any other
+	// order scatters years throughout the page, and a heading there would
+	// mislead rather than help.
+	if cfg.Albums.SortBy == config.SortByDate && cfg.Albums.GroupByYearEnabled() {
+		markYearHeaders(site.Cards)
+	}
+	site.Groups = groupCards(site.Cards)
+
 	// A map with nothing to show would be a blank grey rectangle, which
 	// reads as breakage rather than emptiness.
 	if site.Map != nil && len(site.Points) == 0 {
@@ -145,11 +186,52 @@ func Assemble(cfg *config.Config, output string, albums []gallery.Album, indexes
 	return site
 }
 
+// markYearHeaders flags the first card of each run of a given year, skipping
+// cards with no date (Year 0) so an undated album never starts a bogus group
+// nor breaks up the surrounding one.
+func markYearHeaders(cards []Card) {
+	lastYear := 0
+	for i := range cards {
+		if cards[i].Year != 0 && cards[i].Year != lastYear {
+			cards[i].ShowYearHeader = true
+			lastYear = cards[i].Year
+		}
+	}
+}
+
+// groupCards splits cards at each ShowYearHeader boundary into separate
+// groups, each rendered as its own grid: a heading spanning a shared grid
+// cell renders as an oddly-sized tile, not a full-width divider, so the
+// template gets one grid per group instead. A group's Year of 0 means no
+// heading is drawn for it (the ungrouped case, and any undated albums
+// trailing the last real group).
+func groupCards(cards []Card) []CardGroup {
+	if len(cards) == 0 {
+		return nil
+	}
+	groups := []CardGroup{{}}
+	for _, c := range cards {
+		if c.ShowYearHeader {
+			groups = append(groups, CardGroup{Year: c.Year})
+		}
+		last := &groups[len(groups)-1]
+		last.Cards = append(last.Cards, c)
+	}
+	// The placeholder first group is only real when nothing ended up in
+	// it: an undated leading card (a pinned album, say) legitimately
+	// belongs in a heading-less group, but a group with no cards at all
+	// is just the seed value and must not render as an empty grid.
+	if groups[0].Year == 0 && len(groups[0].Cards) == 0 {
+		groups = groups[1:]
+	}
+	return groups
+}
+
 // orderAlbums applies the two-level sort: albums pinned in config order come
-// first, then Ente's own manual order for the rest, then by name. Pinned
-// albums not in the discovered set are ignored; they may have been excluded
-// or lost their link, and a stale pin should not invent an entry.
-func orderAlbums(albums []gallery.Album, cfg *config.Config) []gallery.Album {
+// first, then the configured sort_by/sort_order for the rest. Pinned albums
+// not in the discovered set are ignored; they may have been excluded or lost
+// their link, and a stale pin should not invent an entry.
+func orderAlbums(albums []gallery.Album, cfg *config.Config, indexes map[int64]*gallery.FileIndex) []gallery.Album {
 	position := make(map[int64]int, len(cfg.Albums.Order))
 	for i, id := range cfg.Albums.Order {
 		position[id] = i
@@ -170,24 +252,80 @@ func orderAlbums(albums []gallery.Album, cfg *config.Config) []gallery.Album {
 		case jok:
 			return false
 		}
-
-		// Ente's manual album order: 0 means unset, and set orders come
-		// before unset ones.
-		oi, oj := ordered[i].SortOrder, ordered[j].SortOrder
-		switch {
-		case oi != 0 && oj != 0 && oi != oj:
-			return oi < oj
-		case oi != 0:
-			return true
-		case oj != 0:
-			return false
-		}
-		// The last tiebreak is the title as displayed, so the page reads
-		// alphabetically to a human, not alphabetically by whatever
-		// prefix the title_regex strips off.
-		return cfg.Albums.CleanTitle(ordered[i].Name) < cfg.Albums.CleanTitle(ordered[j].Name)
+		return albumLess(cfg, indexes, ordered[i], ordered[j])
 	})
 	return ordered
+}
+
+// albumLess orders two unpinned albums per cfg.Albums.SortBy/SortOrder. The
+// displayed (cleaned) title is always the final tiebreak, so the page never
+// looks randomly ordered when its primary key ties.
+func albumLess(cfg *config.Config, indexes map[int64]*gallery.FileIndex, a, b gallery.Album) bool {
+	desc := cfg.Albums.SortOrder == config.SortDesc
+	nameA, nameB := cfg.Albums.CleanTitle(a.Name), cfg.Albums.CleanTitle(b.Name)
+
+	switch cfg.Albums.SortBy {
+	case config.SortByName:
+		if desc {
+			return nameA > nameB
+		}
+		return nameA < nameB
+
+	case config.SortBySize:
+		ca, cb := fileCount(indexes[a.ID]), fileCount(indexes[b.ID])
+		if ca != cb {
+			if desc {
+				return ca > cb
+			}
+			return ca < cb
+		}
+
+	default: // config.SortByDate
+		ta, aok := albumDate(indexes[a.ID], cfg.Albums.DateSource)
+		tb, bok := albumDate(indexes[b.ID], cfg.Albums.DateSource)
+		switch {
+		case aok && bok:
+			if !ta.Equal(tb) {
+				if desc {
+					return ta.After(tb)
+				}
+				return ta.Before(tb)
+			}
+		case aok:
+			// An album with no synced files yet has nothing to rank
+			// chronologically, so it always trails the dated ones
+			// rather than flip-flopping to the front under asc.
+			return true
+		case bok:
+			return false
+		}
+	}
+	return nameA < nameB
+}
+
+// fileCount is len(index.Files), nil-safe for an album with no index yet.
+func fileCount(index *gallery.FileIndex) int {
+	if index == nil {
+		return 0
+	}
+	return len(index.Files)
+}
+
+// albumDate is "the album's date" per source, derived from its earliest and
+// latest file. ok is false when the album has no files yet.
+func albumDate(index *gallery.FileIndex, source string) (time.Time, bool) {
+	earliest, latest, ok := fileTimeRange(index)
+	if !ok {
+		return time.Time{}, false
+	}
+	switch source {
+	case config.DateFirst:
+		return time.UnixMicro(earliest), true
+	case config.DateMidpoint:
+		return time.UnixMicro((earliest + latest) / 2), true
+	default: // config.DateLast
+		return time.UnixMicro(latest), true
+	}
 }
 
 // centroid is an album's map position: the mean of its files' coordinates.
@@ -208,6 +346,41 @@ func centroid(index *gallery.FileIndex) (lat, lon float64, ok bool) {
 		return 0, 0, false
 	}
 	return lat / float64(n), lon / float64(n), true
+}
+
+// dateRange is the earliest and latest CreationTime in an album's index,
+// pre-formatted. to comes back empty when it would equal from, so a
+// single-day album shows one date rather than a pointless "X - X".
+func dateRange(index *gallery.FileIndex) (from, to string) {
+	earliest, latest, ok := fileTimeRange(index)
+	if !ok {
+		return "", ""
+	}
+	from = time.UnixMicro(earliest).Format("2 Jan 2006")
+	to = time.UnixMicro(latest).Format("2 Jan 2006")
+	if to == from {
+		to = ""
+	}
+	return from, to
+}
+
+// fileTimeRange is the earliest and latest CreationTime among an album's
+// files. ok is false for a nil index or one with no files yet.
+func fileTimeRange(index *gallery.FileIndex) (earliest, latest int64, ok bool) {
+	if index == nil {
+		return 0, 0, false
+	}
+	var n int
+	for _, f := range index.Files {
+		if n == 0 || f.CreationTime < earliest {
+			earliest = f.CreationTime
+		}
+		if n == 0 || f.CreationTime > latest {
+			latest = f.CreationTime
+		}
+		n++
+	}
+	return earliest, latest, n > 0
 }
 
 // Render writes the site: index.html, style.css, and points.json when the
