@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -29,6 +30,48 @@ type Covers struct {
 	Fetcher CoverFetcher
 	// Dir is where covers are written, named <collectionID>.jpg.
 	Dir string
+	// StateDir is where each album's coverState marker is written, named
+	// <collectionID>.json. It should be a cache directory (deletable with
+	// no consequence beyond a resync), not the public site output: unlike
+	// the cover image itself, this marker is derived bookkeeping, not a
+	// site asset.
+	StateDir string
+}
+
+// coverState is what Sync persists to StateDir after a successful fetch, so
+// a later run can tell whether the album has changed since without relying
+// on the cover file's own mtime.
+//
+// Both fields are checked because Ente's UpdationTime is bumped only by a
+// file insert into the collection (see Discover's doc comment in
+// discovery.go), not by a magic-metadata edit - and choosing a different
+// cover photo is exactly such an edit (it lives in pubMagicMetadata.coverID,
+// see Album.CoverID). MetadataVersion is what actually changes when that
+// happens, so relying on UpdationTime alone would silently miss a cover
+// swap forever.
+type coverState struct {
+	UpdationTime    int64 `json:"updationTime"`
+	MetadataVersion int   `json:"metadataVersion"`
+}
+
+func readCoverState(path string) (coverState, error) {
+	var state coverState
+	body, err := os.ReadFile(path)
+	if err != nil {
+		return state, err
+	}
+	if err := json.Unmarshal(body, &state); err != nil {
+		return state, err
+	}
+	return state, nil
+}
+
+func writeCoverState(path string, state coverState) error {
+	body, err := json.Marshal(state)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, body, 0o644)
 }
 
 // pickCover decides which file represents the album.
@@ -72,10 +115,11 @@ func pickCover(album Album, index *FileIndex) (int64, bool) {
 // Sync fetches and decrypts the album's cover thumbnail into Dir, unless it is
 // already there and fresh.
 //
-// Freshness is the cover file's mtime against the album's updation time: an
-// album untouched since the cover was written needs nothing. Clock skew
-// between this machine and the server can at worst cause a needless
-// refetch of one small thumbnail, which is the safe direction to fail in.
+// Freshness is judged against a coverState marker recorded in StateDir on
+// the last successful write, not the cover file's own mtime: a plain mtime
+// comparison against UpdationTime cannot detect a cover-photo change (see
+// coverState's doc comment), and needs a marker that actually reflects the
+// state present in the file, rather than a timestamp coincidence.
 func (c *Covers) Sync(ctx context.Context, album Album, index *FileIndex) error {
 	coverID, ok := pickCover(album, index)
 	if !ok {
@@ -83,8 +127,13 @@ func (c *Covers) Sync(ctx context.Context, album Album, index *FileIndex) error 
 	}
 
 	path := filepath.Join(c.Dir, fmt.Sprintf("%d.jpg", album.ID))
-	if info, err := os.Stat(path); err == nil && info.ModTime().UnixMicro() >= album.UpdationTime {
-		return nil
+	statePath := filepath.Join(c.StateDir, fmt.Sprintf("%d.json", album.ID))
+	want := coverState{UpdationTime: album.UpdationTime, MetadataVersion: album.MetadataVersion}
+
+	if _, err := os.Stat(path); err == nil {
+		if have, err := readCoverState(statePath); err == nil && have == want {
+			return nil
+		}
 	}
 
 	// Key material is fetched per cover rather than cached: the file's
@@ -129,6 +178,13 @@ func (c *Covers) Sync(ctx context.Context, album Album, index *FileIndex) error 
 	// Covers are public site assets; world-readable is the point.
 	if err := os.WriteFile(path, plaintext, 0o644); err != nil {
 		return fmt.Errorf("writing %s: %w", path, err)
+	}
+
+	if err := os.MkdirAll(c.StateDir, 0o755); err != nil {
+		return fmt.Errorf("creating cover state directory: %w", err)
+	}
+	if err := writeCoverState(statePath, want); err != nil {
+		return fmt.Errorf("writing %s: %w", statePath, err)
 	}
 	return nil
 }

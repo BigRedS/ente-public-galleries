@@ -36,6 +36,14 @@ type Album struct {
 
 	UpdationTime int64
 
+	// MetadataVersion is the collection's public magic metadata version
+	// (0 if it has none). Ente bumps UpdationTime only when a file is
+	// inserted into the collection, not when its magic metadata is edited
+	// - and CoverID above comes from that metadata - so a cover change
+	// alone leaves UpdationTime untouched. MetadataVersion is the signal
+	// that does change, and Covers.Sync checks both.
+	MetadataVersion int
+
 	// Key is the raw collection key. Secret: see the type comment.
 	Key []byte
 }
@@ -210,6 +218,9 @@ func (d *Discoverer) consider(_ context.Context, c enteapi.Collection, now time.
 		Expires:           expires,
 		UpdationTime:      c.UpdationTime,
 		Key:               key,
+	}
+	if c.PublicMagicMetadata != nil {
+		album.MetadataVersion = c.PublicMagicMetadata.Version
 	}
 	if v, ok := metaString(publicMeta, "caption"); ok {
 		album.Description = v

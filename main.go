@@ -342,6 +342,7 @@ func cmdBuild(ctx context.Context, args []string) error {
 		// full and needs no resetting.
 		for _, dir := range []string{
 			filepath.Join(cfg.Cache, "albums"),
+			filepath.Join(cfg.Cache, "covers"),
 			filepath.Join(cfg.Output, "thumbs"),
 			filepath.Join(cfg.Output, "routes"),
 		} {
@@ -362,7 +363,7 @@ func cmdBuild(ctx context.Context, args []string) error {
 	}
 	printSkips(skips, false, &cfg.Albums)
 
-	covers := &gallery.Covers{Fetcher: client, Dir: filepath.Join(cfg.Output, "thumbs")}
+	covers := &gallery.Covers{Fetcher: client, Dir: filepath.Join(cfg.Output, "thumbs"), StateDir: filepath.Join(cfg.Cache, "covers")}
 	coverFailures := 0
 	for _, album := range albums {
 		if err := covers.Sync(ctx, album, indexes[album.ID]); err != nil {
@@ -438,7 +439,7 @@ func cmdCovers(ctx context.Context, args []string) error {
 		return err
 	}
 
-	covers := &gallery.Covers{Fetcher: client, Dir: filepath.Join(cfg.Output, "thumbs")}
+	covers := &gallery.Covers{Fetcher: client, Dir: filepath.Join(cfg.Output, "thumbs"), StateDir: filepath.Join(cfg.Cache, "covers")}
 
 	failed := 0
 	for _, album := range albums {

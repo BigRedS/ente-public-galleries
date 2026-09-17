@@ -272,6 +272,9 @@ func TestDiscoverHappyPath(t *testing.T) {
 	if a.SortOrder != 3 {
 		t.Errorf("SortOrder = %d", a.SortOrder)
 	}
+	if a.MetadataVersion != 1 {
+		t.Errorf("MetadataVersion = %d, want 1 (from the sealed public metadata)", a.MetadataVersion)
+	}
 	wantURL := "https://albums.ente.com/?t=" + fixtureToken + "#4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi"
 	if a.ShareURL != wantURL {
 		t.Errorf("ShareURL = %q\nwant        %q", a.ShareURL, wantURL)
@@ -432,6 +435,30 @@ func TestDiscoverRewritesAlbumHost(t *testing.T) {
 	want := "https://pics.example.com/?t=" + fixtureToken + "#4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi"
 	if albums[0].ShareURL != want {
 		t.Errorf("ShareURL = %q\nwant       %q", albums[0].ShareURL, want)
+	}
+	if albums[0].MetadataVersion != 0 {
+		t.Errorf("MetadataVersion = %d, want 0 (no public magic metadata at all)", albums[0].MetadataVersion)
+	}
+}
+
+// MetadataVersion is copied straight from the collection's own public magic
+// metadata version, not hardcoded to whatever the fixture builder's sealMeta
+// helper happens to use - Covers.Sync relies on it actually tracking Ente's
+// counter to notice a cover change (see coverState's doc comment).
+func TestDiscoverCopiesMetadataVersion(t *testing.T) {
+	albums, _, err := discoverRaw(t, func(creds *enteapi.Credentials) []enteapi.Collection {
+		c := buildFixture(t, fixture{id: 101, name: "Summer 2026", coverID: 555}, creds)
+		c.PublicMagicMetadata.Version = 7
+		return []enteapi.Collection{c}
+	})
+	if err != nil {
+		t.Fatalf("Discover: %v", err)
+	}
+	if len(albums) != 1 {
+		t.Fatalf("got %d albums, want 1", len(albums))
+	}
+	if albums[0].MetadataVersion != 7 {
+		t.Errorf("MetadataVersion = %d, want 7", albums[0].MetadataVersion)
 	}
 }
 

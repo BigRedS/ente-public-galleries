@@ -7,7 +7,6 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-	"time"
 
 	"github.com/BigRedS/ente-public-galleries/internal/crypto"
 	"github.com/BigRedS/ente-public-galleries/internal/encoding"
@@ -152,7 +151,7 @@ func TestCoversSyncDecryptsAndWritesJPEG(t *testing.T) {
 	thumbnail := fakeJPEG()
 	fetcher := coverFixture(t, 2, thumbnail)
 
-	covers := &Covers{Fetcher: fetcher, Dir: filepath.Join(t.TempDir(), "thumbs")}
+	covers := &Covers{Fetcher: fetcher, Dir: filepath.Join(t.TempDir(), "thumbs"), StateDir: t.TempDir()}
 	album := fixtureAlbum(101, 500)
 	index := indexWith(
 		FileSummary{ID: 1, CreationTime: 1000},
@@ -184,26 +183,48 @@ func TestCoversSyncDecryptsAndWritesJPEG(t *testing.T) {
 	}
 }
 
-// A stale cover - one written before the album's last change - is refetched,
-// so a cover swap in Ente reaches the site on the next run.
-func TestCoversSyncRefetchesStaleCover(t *testing.T) {
+// A cover written under an album's earlier UpdationTime is refetched once
+// that time advances - the ordinary case of a new photo entering the album.
+func TestCoversSyncRefetchesWhenUpdationTimeChanges(t *testing.T) {
 	thumbnail := fakeJPEG()
 	fetcher := coverFixture(t, 1, thumbnail)
-	covers := &Covers{Fetcher: fetcher, Dir: t.TempDir()}
-
-	// An album whose updation time is in the future relative to the file
-	// we are about to write - i.e. the cover is stale the moment it lands.
-	album := fixtureAlbum(101, time.Now().Add(time.Hour).UnixMicro())
+	covers := &Covers{Fetcher: fetcher, Dir: t.TempDir(), StateDir: t.TempDir()}
 	index := indexWith(FileSummary{ID: 1, CreationTime: 1000})
 
-	if err := covers.Sync(context.Background(), album, index); err != nil {
-		t.Fatalf("Sync: %v", err)
+	if err := covers.Sync(context.Background(), fixtureAlbum(101, 500), index); err != nil {
+		t.Fatalf("first Sync: %v", err)
 	}
+	if err := covers.Sync(context.Background(), fixtureAlbum(101, 1500), index); err != nil {
+		t.Fatalf("second Sync: %v", err)
+	}
+	if len(fetcher.gotFile) != 2 {
+		t.Errorf("fetches = %d, want 2 (UpdationTime advanced between syncs)", len(fetcher.gotFile))
+	}
+}
+
+// This is the regression test for the gap this mechanism replaced a plain
+// mtime check to close: Ente does not bump UpdationTime when the owner picks
+// a different cover photo (see coverState's doc comment), so UpdationTime
+// alone would report a stale cover as fresh forever. MetadataVersion is what
+// actually moves in that case, and Sync must notice it even with
+// UpdationTime unchanged.
+func TestCoversSyncRefetchesWhenMetadataVersionChangesAlone(t *testing.T) {
+	thumbnail := fakeJPEG()
+	fetcher := coverFixture(t, 1, thumbnail)
+	covers := &Covers{Fetcher: fetcher, Dir: t.TempDir(), StateDir: t.TempDir()}
+	index := indexWith(FileSummary{ID: 1, CreationTime: 1000})
+
+	album := fixtureAlbum(101, 500)
+	if err := covers.Sync(context.Background(), album, index); err != nil {
+		t.Fatalf("first Sync: %v", err)
+	}
+
+	album.MetadataVersion = 1 // the owner changed the cover in Ente
 	if err := covers.Sync(context.Background(), album, index); err != nil {
 		t.Fatalf("second Sync: %v", err)
 	}
 	if len(fetcher.gotFile) != 2 {
-		t.Errorf("fetches = %d, want 2 (the stale cover must be refetched)", len(fetcher.gotFile))
+		t.Errorf("fetches = %d, want 2 (MetadataVersion changed although UpdationTime did not)", len(fetcher.gotFile))
 	}
 }
 
@@ -212,7 +233,7 @@ func TestCoversSyncRefusesNonJPEG(t *testing.T) {
 	// wrong-key or wrong-slot decryption.
 	notJPEG := []byte("this is definitely not a jpeg")
 	fetcher := coverFixture(t, 1, notJPEG)
-	covers := &Covers{Fetcher: fetcher, Dir: t.TempDir()}
+	covers := &Covers{Fetcher: fetcher, Dir: t.TempDir(), StateDir: t.TempDir()}
 
 	err := covers.Sync(context.Background(), fixtureAlbum(101, 500), indexWith(FileSummary{ID: 1}))
 	if err == nil {
@@ -229,7 +250,8 @@ func TestCoversSyncPropagatesFetchErrors(t *testing.T) {
 			files:      map[int64]enteapi.File{},
 			thumbnails: map[int64][]byte{},
 		},
-		Dir: t.TempDir(),
+		Dir:      t.TempDir(),
+		StateDir: t.TempDir(),
 	}
 	err := covers.Sync(context.Background(), fixtureAlbum(101, 500), indexWith(FileSummary{ID: 1}))
 	if err == nil {
