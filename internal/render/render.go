@@ -59,6 +59,11 @@ type Card struct {
 	// ShowYearHeader marks the first card of a new year group; only ever
 	// set when sorting by date with grouping on.
 	ShowYearHeader bool
+	// RoutePath is relative to the site root; empty when there is no route
+	// image (fewer than two geotagged photos, route rendering disabled, or
+	// the render failed and was skipped for this album).
+	RoutePath string
+	HasRoute  bool
 }
 
 // CardGroup is a run of cards under one year heading, rendered as its own
@@ -121,6 +126,10 @@ func Assemble(cfg *config.Config, output string, albums []gallery.Album, indexes
 		}
 		if _, err := os.Stat(filepath.Join(output, "thumbs", fmt.Sprintf("%d.jpg", album.ID))); err == nil {
 			card.HasThumb = true
+		}
+		if _, err := os.Stat(filepath.Join(output, "routes", fmt.Sprintf("%d.png", album.ID))); err == nil {
+			card.HasRoute = true
+			card.RoutePath = fmt.Sprintf("routes/%d.png", album.ID)
 		}
 		if !album.Expires.IsZero() {
 			card.Expires = album.Expires.Format("2 Jan 2006")

@@ -33,6 +33,7 @@ type Config struct {
 	Cache  string `yaml:"cache"`
 	Site   Site   `yaml:"site"`
 	Map    Map    `yaml:"map"`
+	Route  Route  `yaml:"route"`
 	Albums Albums `yaml:"albums"`
 }
 
@@ -45,6 +46,23 @@ type Account struct {
 	// Needed when albums are served from a custom domain, since the server
 	// still hands back its own configured album host.
 	AlbumURLBase string `yaml:"album_url_base"`
+}
+
+// Route configures the per-album route-map thumbnail: a line connecting an
+// album's geotagged photos in time order, drawn over a real OSM basemap and
+// rendered once at build time. It deliberately reuses Map.Tiles and
+// Map.Attribution rather than declaring a second tile-server config - it is
+// the same physical basemap, just rendered to a static image instead of a
+// live Leaflet map, and a second tile URL would be one more thing to keep
+// in sync. Route is independent of Map.Enabled: a site can have route
+// badges without the live map, or the live map without route badges.
+type Route struct {
+	Enabled *bool `yaml:"enabled"`
+	// Width and Height are the rendered PNG's pixel dimensions. The same
+	// image is shown small in the card and CSS-enlarged on hover, so this
+	// should be sized for the larger, on-hover display, not the small one.
+	Width  int `yaml:"width"`
+	Height int `yaml:"height"`
 }
 
 // Site holds presentational text for the generated page.
@@ -231,6 +249,8 @@ const (
 	defaultAttribution = `&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors`
 	defaultLeafletJS   = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
 	defaultLeafletCSS  = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+	defaultRouteWidth  = 320
+	defaultRouteHeight = 320
 )
 
 // Load reads path. A missing file yields defaults, because the tool is usable
@@ -311,6 +331,16 @@ func (c *Config) applyDefaults() {
 		grouped := true
 		c.Albums.GroupByYear = &grouped
 	}
+	if c.Route.Enabled == nil {
+		enabled := true
+		c.Route.Enabled = &enabled
+	}
+	if c.Route.Width == 0 {
+		c.Route.Width = defaultRouteWidth
+	}
+	if c.Route.Height == 0 {
+		c.Route.Height = defaultRouteHeight
+	}
 }
 
 func (c *Config) validate() error {
@@ -337,6 +367,10 @@ func (c *Config) validate() error {
 	default:
 		return fmt.Errorf("albums.date_source is %q, expected one of %q, %q or %q",
 			c.Albums.DateSource, DateFirst, DateLast, DateMidpoint)
+	}
+
+	if c.Route.Width <= 0 || c.Route.Height <= 0 {
+		return fmt.Errorf("route.width/height are %d/%d, both must be positive", c.Route.Width, c.Route.Height)
 	}
 
 	if c.Albums.TitleRegex != "" {
@@ -367,6 +401,11 @@ func (c *Config) MapEnabled() bool {
 // only meaningful when SortBy is "date"; callers check that separately.
 func (a *Albums) GroupByYearEnabled() bool {
 	return a.GroupByYear != nil && *a.GroupByYear
+}
+
+// RouteEnabled reports whether route-map thumbnails should be generated.
+func (c *Config) RouteEnabled() bool {
+	return c.Route.Enabled != nil && *c.Route.Enabled
 }
 
 // IsExcluded reports whether an album has been explicitly excluded.

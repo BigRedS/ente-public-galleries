@@ -52,6 +52,8 @@ expiry, no device limit, matching Ente's own defaults.
     list     Publishable albums with file/geotag counts; -v names every skip
     covers   Fetch and decrypt cover thumbnails only (the risky path in
              isolation; `file out/thumbs/*.jpg` should say JPEG image data)
+    routes   Render route-map thumbnails only (isolates tile-server issues
+             from a full build; needs route.enabled, on by default)
     build    Generate the site
 
 ## Configuration
@@ -98,3 +100,17 @@ Design rationale for the non-obvious decisions (why discovery never goes
 incremental, why no key material is ever cached, why the `/public-collection`
 endpoints are never touched) lives in code comments and commit messages, by
 policy: docs here would drift, comments can't.
+
+### Considered and dropped: an owner-only "edit in Ente" link per album
+
+The idea: a small, hidden-by-default control on each card linking straight to
+that album in the owner's own signed-in Ente session, for quickly jumping
+from the public page into editing. Built and then removed, because Ente's
+web app (`web/apps/photos/src/pages/gallery.tsx` in `ente-io/ente`) doesn't
+actually support deep-linking to a specific collection: the `?collection=id`
+query string is write-only — the app pushes it into the URL bar to reflect
+whatever album you've navigated to in-app, but nothing reads it back on load
+to select that album (their own code even carries a
+`// TODO: Is this URL param even used?` next to where it's written). A cold
+link to that URL always lands on "all photos". Worth revisiting if upstream
+ever adds real deep-link support.

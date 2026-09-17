@@ -28,11 +28,18 @@
     <div class="grid">
       {{range .Cards}}
       <a class="card" href="{{.ShareURL}}" data-name="{{.SearchName}}">
-        {{if .HasThumb}}
-        <img loading="lazy" src="{{.ThumbPath}}" alt="Cover photo of {{.Name}}">
-        {{else}}
-        <div class="placeholder" aria-hidden="true"></div>
-        {{end}}
+        <div class="cover">
+          {{if .HasThumb}}
+          <img loading="lazy" src="{{.ThumbPath}}" alt="Cover photo of {{.Name}}">
+          {{else}}
+          <div class="placeholder" aria-hidden="true"></div>
+          {{end}}
+          {{if .HasRoute}}
+          <span class="route-badge" aria-hidden="true">
+            <img class="route-thumb" src="{{.RoutePath}}" loading="lazy" alt="">
+          </span>
+          {{end}}
+        </div>
         <div class="meta">
           <h2>{{.Name}}</h2>
           {{if .Description}}<p>{{.Description}}</p>{{end}}

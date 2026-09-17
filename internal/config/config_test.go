@@ -318,3 +318,42 @@ func TestTitleRegexErrorsAtLoad(t *testing.T) {
 		}
 	}
 }
+
+func TestRouteDefaults(t *testing.T) {
+	cfg, err := Load(filepath.Join(t.TempDir(), "absent.yaml"))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !cfg.RouteEnabled() {
+		t.Error("RouteEnabled() = false, want true by default")
+	}
+	if cfg.Route.Width != 320 || cfg.Route.Height != 320 {
+		t.Errorf("Route dimensions = %d/%d, want 320/320", cfg.Route.Width, cfg.Route.Height)
+	}
+}
+
+func TestRouteCanBeDisabled(t *testing.T) {
+	cfg, err := Load(writeConfig(t, "route:\n  enabled: false\n"))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.RouteEnabled() {
+		t.Error("RouteEnabled() = true despite route.enabled: false")
+	}
+}
+
+// A width/height of exactly 0 is indistinguishable from "unset" (an int's
+// zero value) and so is defaulted rather than rejected, same as every other
+// bare-int config field here; only a negative value is unambiguously wrong
+// and reaches validation.
+func TestInvalidRouteDimensionsIsAnError(t *testing.T) {
+	for _, body := range []string{
+		"route:\n  width: -1\n",
+		"route:\n  height: -10\n",
+	} {
+		_, err := Load(writeConfig(t, body))
+		if err == nil {
+			t.Errorf("Load accepted %q, expected an error", body)
+		}
+	}
+}

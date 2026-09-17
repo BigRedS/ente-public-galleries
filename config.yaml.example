@@ -62,6 +62,21 @@ map:
   # leaflet_js: https://unpkg.com/leaflet@1.9.4/dist/leaflet.js
   # leaflet_css: https://unpkg.com/leaflet@1.9.4/dist/leaflet.css
 
+route:
+  # Draw a small route-map thumbnail on each album's cover: a line
+  # connecting its geotagged photos in time order, over the same basemap
+  # (map.tiles/map.attribution above) as the live map, rendered once at
+  # build time and cached hard. Albums with fewer than two geotagged photos
+  # get no thumbnail. Independent of map.enabled - you can have route
+  # thumbnails without the live map, or the live map without them.
+  # enabled: true
+
+  # The rendered PNG's pixel size. It is shown small in the card and
+  # CSS-enlarged on hover from the same image, so size this for the larger,
+  # on-hover display rather than the small one.
+  # width: 320
+  # height: 320
+
 albums:
   # A sed-style substitution applied to album titles for display, for
   # stripping prefixes Ente titles carry that a gallery page should not show.

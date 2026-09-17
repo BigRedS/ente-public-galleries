@@ -110,8 +110,12 @@ main {
   transform: translateY(-2px);
 }
 
-.card img,
-.card .placeholder {
+.card .cover {
+  position: relative;
+}
+
+.card .cover > img,
+.card .cover > .placeholder {
   width: 100%;
   aspect-ratio: 1 / 1;
   object-fit: cover;
@@ -124,6 +128,33 @@ main {
   background:
     linear-gradient(135deg, transparent 46%, var(--surface-quiet) 46% 54%, transparent 54%),
     var(--bg);
+}
+
+.route-badge {
+  position: absolute;
+  right: 0.5rem;
+  bottom: 0.5rem;
+  z-index: 1;
+  border-radius: 6px;
+  overflow: hidden;
+  border: 1px solid var(--surface-quiet);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.5);
+  transform-origin: bottom right;
+  transition: transform 150ms ease;
+}
+
+.route-thumb {
+  display: block;
+  width: 56px;
+  height: 56px;
+  object-fit: cover;
+}
+
+/* Enlarges in place, bounded by .card's own overflow:hidden (its rounded
+   corners), rather than escaping over neighbouring cards - comfortably
+   under the grid's 250px minimum column width. */
+.route-badge:hover {
+  transform: scale(3.5);
 }
 
 .card .meta {

@@ -85,6 +85,18 @@ func (f *siteFixture) writeCover(t *testing.T, albumID int64) {
 	}
 }
 
+// writeRoute places a stand-in route image where Assemble looks for it.
+func (f *siteFixture) writeRoute(t *testing.T, albumID int64) {
+	t.Helper()
+	dir := filepath.Join(f.cfg.Output, "routes")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("creating routes dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, strconv.FormatInt(albumID, 10)+".png"), []byte{0x89, 'P', 'N', 'G'}, 0o644); err != nil {
+		t.Fatalf("writing stand-in route image: %v", err)
+	}
+}
+
 func TestAssembleBuildsCardsAndAlbumPoints(t *testing.T) {
 	f := newSiteFixture(t)
 	f.writeCover(t, 1)
@@ -502,6 +514,33 @@ func TestAssembleSearchNameFollowsDisplayedName(t *testing.T) {
 	for _, card := range site.Cards {
 		if card.SearchName != strings.ToLower(card.Name) {
 			t.Errorf("card %q: SearchName = %q, want %q", card.Name, card.SearchName, strings.ToLower(card.Name))
+		}
+	}
+}
+
+func TestAssembleSetsHasRouteWhenRouteImageExists(t *testing.T) {
+	f := newSiteFixture(t)
+	f.writeRoute(t, 1)
+
+	site := Assemble(f.cfg, f.cfg.Output, f.albums, f.indexes)
+	for _, card := range site.Cards {
+		if card.Name == "Birthday Trackday" {
+			if !card.HasRoute || card.RoutePath != "routes/1.png" {
+				t.Errorf("card 1 route = %q/%v, want routes/1.png/true", card.RoutePath, card.HasRoute)
+			}
+			return
+		}
+	}
+	t.Fatal("Birthday Trackday card not found")
+}
+
+func TestAssembleLeavesHasRouteFalseWithoutOne(t *testing.T) {
+	f := newSiteFixture(t)
+
+	site := Assemble(f.cfg, f.cfg.Output, f.albums, f.indexes)
+	for _, card := range site.Cards {
+		if card.HasRoute {
+			t.Errorf("card %q has HasRoute despite no route image being written", card.Name)
 		}
 	}
 }

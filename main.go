@@ -28,6 +28,7 @@ import (
 	"github.com/BigRedS/ente-public-galleries/internal/prompt"
 	"github.com/BigRedS/ente-public-galleries/internal/render"
 	"github.com/BigRedS/ente-public-galleries/internal/session"
+	"github.com/BigRedS/ente-public-galleries/internal/staticmap"
 )
 
 // version is reported in the User-Agent so server-side logs can attribute
@@ -62,6 +63,7 @@ Commands:
   whoami   Show who the saved session belongs to
   list     Show the albums that would be published
   covers   Fetch cover thumbnails for the publishable albums
+  routes   Render route-map thumbnails for the publishable albums
   build    Generate the site
 
 Run a command with -h for its flags.
@@ -88,6 +90,8 @@ func run(args []string) error {
 		return cmdList(ctx, rest)
 	case "covers":
 		return cmdCovers(ctx, rest)
+	case "routes":
+		return cmdRoutes(ctx, rest)
 	case "build":
 		return cmdBuild(ctx, rest)
 	case "-h", "--help", "help":
@@ -339,12 +343,17 @@ func cmdBuild(ctx context.Context, args []string) error {
 		for _, dir := range []string{
 			filepath.Join(cfg.Cache, "albums"),
 			filepath.Join(cfg.Output, "thumbs"),
+			filepath.Join(cfg.Output, "routes"),
 		} {
 			if err := os.RemoveAll(dir); err != nil {
 				return err
 			}
 		}
-		fmt.Fprintf(os.Stderr, "Refresh: discarded cached file indexes and cover thumbnails.\n")
+		// cfg.Cache/tiles is deliberately left alone: it holds raw OSM
+		// tile data, not this tool's own derived output, and wiping it on
+		// every refresh would mean re-downloading a world's worth of
+		// tiles and would be unkind to the tile server.
+		fmt.Fprintf(os.Stderr, "Refresh: discarded cached file indexes, cover thumbnails and route images.\n")
 	}
 
 	albums, indexes, skips, err := discoverAndSync(ctx, client, creds, cfg)
@@ -362,6 +371,20 @@ func cmdBuild(ctx context.Context, args []string) error {
 		}
 	}
 
+	routes, err := newRoutes(cfg, userAgent())
+	if err != nil {
+		return err
+	}
+	routeFailures := 0
+	if routes != nil {
+		for _, album := range albums {
+			if err := routes.Sync(ctx, album, indexes[album.ID]); err != nil {
+				fmt.Fprintf(os.Stderr, "warning: route image for %q: %v (the album will show no route)\n", album.Name, err)
+				routeFailures++
+			}
+		}
+	}
+
 	site := render.Assemble(cfg, cfg.Output, albums, indexes)
 	if err := render.Render(cfg.Output, site); err != nil {
 		return err
@@ -373,6 +396,9 @@ func cmdBuild(ctx context.Context, args []string) error {
 	}
 	if coverFailures > 0 {
 		fmt.Printf(", %d cover(s) failed", coverFailures)
+	}
+	if routeFailures > 0 {
+		fmt.Printf(", %d route(s) failed", routeFailures)
 	}
 	fmt.Println()
 	return nil
@@ -436,6 +462,87 @@ func cmdCovers(ctx context.Context, args []string) error {
 	fmt.Fprintf(os.Stderr, "%d album(s), %d cover failure(s).\n", len(albums), failed)
 	if failed > 0 {
 		return fmt.Errorf("%d of %d covers failed; run with the failures above for detail", failed, len(albums))
+	}
+	return nil
+}
+
+// newRoutes builds the gallery.Routes for the site, wiring in the
+// internal/staticmap renderer built from the site's own tile config
+// (cfg.Map.Tiles/Attribution - see internal/config's Route doc comment for
+// why route rendering deliberately reuses the map's tile config rather than
+// declaring a second one). Returns nil, nil when route rendering is
+// disabled, so callers just skip the sync loop.
+func newRoutes(cfg *config.Config, agent string) (*gallery.Routes, error) {
+	if !cfg.RouteEnabled() {
+		return nil, nil
+	}
+	renderer, err := staticmap.New(cfg.Map.Tiles, cfg.Map.Attribution, cfg.Route.Width, cfg.Route.Height,
+		agent, filepath.Join(cfg.Cache, "tiles"))
+	if err != nil {
+		return nil, fmt.Errorf("configuring route renderer: %w", err)
+	}
+	return &gallery.Routes{Renderer: renderer, Dir: filepath.Join(cfg.Output, "routes")}, nil
+}
+
+// cmdRoutes exists for the same reason cmdCovers does: route rendering
+// depends on a new external service (an OSM tile server) with its own
+// failure modes, separate from the cover-thumbnail fetch, and this runs
+// exactly what build will run, stopping before rendering the page, so a
+// failure here is a failure in tile-fetching/drawing and nothing else.
+func cmdRoutes(ctx context.Context, args []string) error {
+	fs := flag.NewFlagSet("routes", flag.ContinueOnError)
+	var flags cli.Flags
+	flags.Register(fs)
+	refresh := fs.Bool("refresh", false, "re-render routes even when fresh on disk")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+
+	cfg, err := config.Load(flags.ConfigPath)
+	if err != nil {
+		return err
+	}
+	creds, client, err := cli.Session(flags, cfg, userAgent())
+	if err != nil {
+		return err
+	}
+
+	albums, indexes, _, err := discoverAndSync(ctx, client, creds, cfg)
+	if err != nil {
+		return err
+	}
+
+	routes, err := newRoutes(cfg, userAgent())
+	if err != nil {
+		return err
+	}
+	if routes == nil {
+		fmt.Fprintln(os.Stderr, "route.enabled is false; nothing to do.")
+		return nil
+	}
+
+	failed := 0
+	for _, album := range albums {
+		routePath := filepath.Join(routes.Dir, fmt.Sprintf("%d.png", album.ID))
+		if *refresh {
+			if err := os.Remove(routePath); err != nil && !errors.Is(err, os.ErrNotExist) {
+				return err
+			}
+		}
+
+		if err := routes.Sync(ctx, album, indexes[album.ID]); err != nil {
+			fmt.Fprintf(os.Stderr, "  %s: %v\n", album.Name, err)
+			failed++
+			continue
+		}
+		if info, err := os.Stat(routePath); err == nil {
+			fmt.Printf("  %-40s %s (%d bytes)\n", album.Name, routePath, info.Size())
+		}
+	}
+
+	fmt.Fprintf(os.Stderr, "%d album(s), %d route failure(s).\n", len(albums), failed)
+	if failed > 0 {
+		return fmt.Errorf("%d of %d routes failed; run with the failures above for detail", failed, len(albums))
 	}
 	return nil
 }
