@@ -27,7 +27,7 @@
     {{if .Year}}<h2 class="year-header">{{.Year}}</h2>{{end}}
     <div class="grid">
       {{range .Cards}}
-      <a class="card" href="{{.ShareURL}}" data-name="{{.SearchName}}">
+      <a class="card" href="{{.ShareURL}}" data-name="{{.SearchName}}" target="_blank" rel="noopener">
         <div class="cover">
           {{if .HasThumb}}
           <img loading="lazy" src="{{.ThumbPath}}" alt="Cover photo of {{.Name}}">
