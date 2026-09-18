@@ -246,8 +246,14 @@ func cmdWhoami(ctx context.Context, args []string) error {
 	return nil
 }
 
+// userAgent is sent to both Ente's API and, for route-map rendering, the
+// configured tile server. OSM's tile usage policy specifically asks for a
+// User-Agent that identifies the application (a generic default is grounds
+// for blocking without notice) - the repo link lets whoever operates either
+// server see what's hitting them and why, without needing a personal email
+// address baked in.
 func userAgent() string {
-	return "ente-public-galleries/" + version
+	return "ente-public-galleries/" + version + " (+https://github.com/BigRedS/ente-public-galleries)"
 }
 
 func cmdList(ctx context.Context, args []string) error {

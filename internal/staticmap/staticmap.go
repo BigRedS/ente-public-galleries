@@ -34,6 +34,10 @@ const (
 	startMarkerSize = 5.0
 	endMarkerSize   = 5.0
 	tileSize        = 256
+	// maxTileZoom is the highest zoom level standard OSM-style raster tile
+	// servers actually render; asking for anything beyond it gets a 400,
+	// not a real tile.
+	maxTileZoom = 19
 )
 
 var (
@@ -102,6 +106,14 @@ func (r *Renderer) Render(_ context.Context, points []gallery.RoutePoint) ([]byt
 	mapCtx.SetSize(r.width, r.height)
 	mapCtx.SetTileProvider(r.provider)
 	mapCtx.SetUserAgent(r.userAgent)
+	// go-staticmaps defaults maxZoom to 30 and auto-fits the tightest zoom
+	// that fills the image around the given points; for an album whose
+	// photos were all taken within a few metres of each other, that can
+	// compute a zoom level standard OSM-style tile servers don't render
+	// (they max out around 19) and get a 400 back for every tile at that
+	// zoom. Capping it here is what actually avoids that, not backing off
+	// on request volume.
+	mapCtx.SetMaxZoom(maxTileZoom)
 	if r.cacheDir != "" {
 		mapCtx.SetCache(sm.NewTileCache(r.cacheDir, 0o755))
 	} else {
