@@ -3,5 +3,5 @@
 #
 # Intentionally doesn't just `build` in here to avoid dragging in Ente session
 # credentials. It's a static site of flat files, it should just be a copy.
-FROM nginx:alpine
+FROM docker.io/library/nginx:alpine
 COPY out/ /usr/share/nginx/html/
