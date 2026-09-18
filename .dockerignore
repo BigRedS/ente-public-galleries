@@ -1,0 +1,5 @@
+# Deny-by-default to avoid accidentally publishing credentials or
+# other secrets
+*
+!out/
+!out/**
