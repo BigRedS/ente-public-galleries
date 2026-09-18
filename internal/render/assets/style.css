@@ -33,13 +33,32 @@ header h1 {
   letter-spacing: -0.02em;
 }
 
-header .footer {
+header .subtitle {
   margin: 0.4rem 0 0;
   color: var(--text-quiet);
 }
 
-.search {
+body > footer {
+  max-width: 1080px;
+  margin: 0 auto;
+  padding: 1.5rem 1.25rem 2.5rem;
+  color: var(--text-quiet);
+  font-size: 0.9rem;
+  text-align: center;
+}
+
+body > footer a {
+  color: var(--accent);
+}
+
+.controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
   margin: 1rem 0 0;
+}
+
+.search {
   padding: 0.55rem 0.85rem;
   width: 100%;
   max-width: 320px;
@@ -54,9 +73,19 @@ header .footer {
   color: var(--text-quiet);
 }
 
-.search:focus {
+.search:focus,
+#year-jump:focus {
   outline: none;
   border-color: var(--accent);
+}
+
+#year-jump {
+  padding: 0.55rem 2rem 0.55rem 0.85rem;
+  background: var(--surface);
+  border: 1px solid var(--surface-quiet);
+  border-radius: 999px;
+  color: var(--text);
+  font-size: 0.95rem;
 }
 
 main {
@@ -87,7 +116,11 @@ main {
   font-weight: 600;
 }
 
-.year-header:first-of-type {
+/* Each heading now lives alone inside its own <section id="year-YYYY">, so
+   :first-of-type on .year-header itself would match all of them (each is
+   trivially "first of its type" within its own parent). Scope to the first
+   such section among main's children instead. */
+main > section:first-of-type .year-header {
   margin-top: 0;
   padding-top: 0;
   border-top: none;

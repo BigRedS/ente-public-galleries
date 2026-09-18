@@ -446,6 +446,32 @@ func TestAssembleGroupsSplitCardsPerYear(t *testing.T) {
 	}
 }
 
+// Years mirrors the groups' years in page order, for the year-jump nav; it's
+// empty whenever nothing is grouped, so the template can skip the nav.
+func TestAssembleYearsMatchesGroupOrder(t *testing.T) {
+	f := newSiteFixture(t)
+	f.indexes[1].Files = map[int64]gallery.FileSummary{
+		11: {ID: 11, CreationTime: time.Date(2023, 6, 1, 0, 0, 0, 0, time.UTC).UnixMicro()},
+	}
+	f.indexes[2].Files = map[int64]gallery.FileSummary{
+		21: {ID: 21, CreationTime: time.Date(2024, 6, 1, 0, 0, 0, 0, time.UTC).UnixMicro()},
+	}
+	f.cfg.Albums.SortBy = config.SortByDate
+	f.cfg.Albums.SortOrder = config.SortDesc // default: newest year first
+
+	site := Assemble(f.cfg, f.cfg.Output, f.albums, f.indexes)
+	if len(site.Years) != 2 || site.Years[0] != 2024 || site.Years[1] != 2023 {
+		t.Errorf("Years = %v, want [2024, 2023]", site.Years)
+	}
+
+	disabled := false
+	f.cfg.Albums.GroupByYear = &disabled
+	site = Assemble(f.cfg, f.cfg.Output, f.albums, f.indexes)
+	if len(site.Years) != 0 {
+		t.Errorf("Years = %v, want none when grouping is off", site.Years)
+	}
+}
+
 // No albums at all yields no groups, so the template falls back to its
 // empty-state message instead of rendering a blank grid.
 func TestAssembleGroupsEmptyWhenNoAlbums(t *testing.T) {
@@ -572,8 +598,8 @@ func TestRenderSplitsGroupsIntoSeparateGrids(t *testing.T) {
 	if got := strings.Count(page, `<div class="grid">`); got != 2 {
 		t.Errorf(`page has %d <div class="grid"> elements, want 2 (one per year)`, got)
 	}
-	firstHeader := strings.Index(page, `<h2 class="year-header">2023</h2>`)
-	secondHeader := strings.Index(page, `<h2 class="year-header">2024</h2>`)
+	firstHeader := strings.Index(page, `<section id="year-2023">`)
+	secondHeader := strings.Index(page, `<section id="year-2024">`)
 	firstGrid := strings.Index(page, `<div class="grid">`)
 	if firstHeader == -1 || secondHeader == -1 {
 		t.Fatalf("year headers missing from page")
@@ -583,6 +609,65 @@ func TestRenderSplitsGroupsIntoSeparateGrids(t *testing.T) {
 	}
 	if secondHeader < firstHeader {
 		t.Error("year headings out of order")
+	}
+}
+
+// The year-jump dropdown offers each year as an <option>, in the same order
+// the years appear on the page, and sits in the header (before <main>,
+// hence before the sections it jumps to).
+func TestRenderYearJumpDropdownListsYearsInOrder(t *testing.T) {
+	f := newSiteFixture(t)
+	f.indexes[1].Files = map[int64]gallery.FileSummary{
+		11: {ID: 11, CreationTime: time.Date(2023, 6, 1, 0, 0, 0, 0, time.UTC).UnixMicro()},
+	}
+	f.indexes[2].Files = map[int64]gallery.FileSummary{
+		21: {ID: 21, CreationTime: time.Date(2024, 6, 1, 0, 0, 0, 0, time.UTC).UnixMicro()},
+	}
+	f.cfg.Albums.SortBy = config.SortByDate
+	f.cfg.Albums.SortOrder = config.SortDesc
+
+	site := Assemble(f.cfg, f.cfg.Output, f.albums, f.indexes)
+	if err := Render(f.cfg.Output, site); err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	index, err := os.ReadFile(filepath.Join(f.cfg.Output, "index.html"))
+	if err != nil {
+		t.Fatalf("reading index.html: %v", err)
+	}
+	page := string(index)
+
+	dropdown := strings.Index(page, `id="year-jump"`)
+	option2024 := strings.Index(page, `<option value="2024">2024</option>`)
+	option2023 := strings.Index(page, `<option value="2023">2023</option>`)
+	section2024 := strings.Index(page, `<section id="year-2024">`)
+	if dropdown == -1 || option2024 == -1 || option2023 == -1 {
+		t.Fatalf("year-jump dropdown or its options missing from page")
+	}
+	if option2024 > option2023 {
+		t.Error("dropdown options out of order, want newest year (2024) first")
+	}
+	if dropdown > section2024 {
+		t.Error("year-jump dropdown (in the header) should come before the sections it links to")
+	}
+}
+
+// No year grouping means no year-jump dropdown either - nothing to jump
+// between.
+func TestRenderOmitsYearJumpDropdownWithoutGrouping(t *testing.T) {
+	f := newSiteFixture(t)
+	disabled := false
+	f.cfg.Albums.GroupByYear = &disabled
+
+	site := Assemble(f.cfg, f.cfg.Output, f.albums, f.indexes)
+	if err := Render(f.cfg.Output, site); err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	index, err := os.ReadFile(filepath.Join(f.cfg.Output, "index.html"))
+	if err != nil {
+		t.Fatalf("reading index.html: %v", err)
+	}
+	if strings.Contains(string(index), `id="year-jump"`) {
+		t.Error("year-jump dropdown present despite grouping being off")
 	}
 }
 
@@ -658,6 +743,43 @@ func TestRenderEscapesAlbumNames(t *testing.T) {
 	}
 	if !strings.Contains(string(index), "&lt;script&gt;") {
 		t.Error("album name was not escaped into text")
+	}
+}
+
+// Subtitle sits under the title; Footer sits at the bottom of the page,
+// under the gallery grid. Both are raw HTML (config is operator-authored,
+// not visitor input), unlike album names which still get escaped above.
+func TestRenderPlacesSubtitleAndFooterAndPassesHTMLThrough(t *testing.T) {
+	f := newSiteFixture(t)
+	f.cfg.Site.Subtitle = `Photos from <em>2023</em> onward`
+	f.cfg.Site.Footer = `Built with <a href="https://example.com">a tool</a>`
+
+	site := Assemble(f.cfg, f.cfg.Output, f.albums, f.indexes)
+	if err := Render(f.cfg.Output, site); err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	index, err := os.ReadFile(filepath.Join(f.cfg.Output, "index.html"))
+	if err != nil {
+		t.Fatalf("reading index.html: %v", err)
+	}
+	page := string(index)
+
+	if !strings.Contains(page, `<p class="subtitle">Photos from <em>2023</em> onward</p>`) {
+		t.Error("subtitle missing, escaped, or not under the title")
+	}
+	if !strings.Contains(page, `<footer>Built with <a href="https://example.com">a tool</a></footer>`) {
+		t.Error("footer missing, escaped, or malformed")
+	}
+
+	titleEnd := strings.Index(page, "<h1>")
+	mainEnd := strings.Index(page, "</main>")
+	subtitlePos := strings.Index(page, `class="subtitle"`)
+	footerPos := strings.Index(page, "<footer>")
+	if subtitlePos < titleEnd {
+		t.Error("subtitle should come after the title")
+	}
+	if footerPos < mainEnd {
+		t.Error("footer should come after </main>, not up near the title")
 	}
 }
 

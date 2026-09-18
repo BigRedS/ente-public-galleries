@@ -84,13 +84,22 @@ type Point struct {
 
 // SiteData is the template's entire world.
 type SiteData struct {
-	Title  string
-	Footer string
-	Map    *MapData
-	Cards  []Card
+	Title string
+	// Subtitle and Footer are raw HTML (see config.Site's doc comment for
+	// why): the template must not escape them, so they carry the
+	// html/template.HTML type rather than string.
+	Subtitle template.HTML
+	Footer   template.HTML
+	Map      *MapData
+	Cards    []Card
 	// Groups is Cards split into per-year runs for the template to render
 	// as separate grids; see groupCards.
 	Groups []CardGroup
+	// Years lists Groups' years in the same top-to-bottom order as the
+	// page, for the year-jump nav under the map. Empty when grouping is
+	// off (or nothing is grouped), so the template can skip the nav
+	// entirely rather than render an empty one.
+	Years  []int
 	Points []Point
 }
 
@@ -102,7 +111,11 @@ type SiteData struct {
 // an album whose cover failed to fetch gets a placeholder card rather than a
 // broken image, and that has to be known at template time.
 func Assemble(cfg *config.Config, output string, albums []gallery.Album, indexes map[int64]*gallery.FileIndex) SiteData {
-	site := SiteData{Title: cfg.Site.Title, Footer: cfg.Site.Footer}
+	site := SiteData{
+		Title:    cfg.Site.Title,
+		Subtitle: template.HTML(cfg.Site.Subtitle), //nolint:gosec // config is operator-authored, not visitor input
+		Footer:   template.HTML(cfg.Site.Footer),   //nolint:gosec // same
+	}
 
 	if cfg.MapEnabled() {
 		site.Map = &MapData{
@@ -186,6 +199,11 @@ func Assemble(cfg *config.Config, output string, albums []gallery.Album, indexes
 		markYearHeaders(site.Cards)
 	}
 	site.Groups = groupCards(site.Cards)
+	for _, g := range site.Groups {
+		if g.Year != 0 {
+			site.Years = append(site.Years, g.Year)
+		}
+	}
 
 	// A map with nothing to show would be a blank grey rectangle, which
 	// reads as breakage rather than emptiness.

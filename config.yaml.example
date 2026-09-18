@@ -37,9 +37,15 @@ account:
 # cache: ./.cache
 
 site:
-  # Page title and footer text.
+  # Page title, in the <title> tag and the big heading at the top.
   # title: Galleries
-  # footer: All photos on Ente
+
+  # Subtitle and footer are raw HTML, not escaped text - a link or bit of
+  # emphasis is fine, since this file is written by whoever runs the site,
+  # not by a visitor. Subtitle sits under the title; footer sits at the very
+  # bottom of the page, under the gallery grid.
+  # subtitle: All photos on Ente
+  # footer: 'Built with <a href="https://github.com/BigRedS/ente-public-galleries">ente-public-galleries</a>'
 
 map:
   # Set false to leave the map out entirely.

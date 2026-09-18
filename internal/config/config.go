@@ -66,8 +66,17 @@ type Route struct {
 }
 
 // Site holds presentational text for the generated page.
+//
+// Subtitle and Footer are rendered as raw HTML, not escaped text: both are
+// written by whoever owns the site (this is a config file, not visitor
+// input), so the usual XSS concern doesn't apply, and it's the simplest way
+// to let a link or bit of emphasis into either without pulling in a Markdown
+// parser for what's normally a line or two of text.
 type Site struct {
-	Title  string `yaml:"title"`
+	Title string `yaml:"title"`
+	// Subtitle sits under the title, at the top of the page.
+	Subtitle string `yaml:"subtitle"`
+	// Footer sits at the bottom of the page, under the gallery grid.
 	Footer string `yaml:"footer"`
 }
 

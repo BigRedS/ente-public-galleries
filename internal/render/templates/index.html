@@ -11,9 +11,17 @@
 <body>
   <header>
     <h1>{{.Title}}</h1>
-    {{if .Footer}}<p class="footer">{{.Footer}}</p>{{end}}
+    {{if .Subtitle}}<p class="subtitle">{{.Subtitle}}</p>{{end}}
     {{if .Cards}}
-    <input type="search" id="search" class="search" placeholder="Search galleries…" aria-label="Search galleries by name" autocomplete="off">
+    <div class="controls">
+      <input type="search" id="search" class="search" placeholder="Search galleries…" aria-label="Search galleries by name" autocomplete="off">
+      {{if .Years}}
+      <select id="year-jump" aria-label="Jump to a year">
+        <option value="">Jump to year…</option>
+        {{range .Years}}<option value="{{.}}">{{.}}</option>{{end}}
+      </select>
+      {{end}}
+    </div>
     {{end}}
   </header>
 
@@ -24,6 +32,7 @@
 
     {{if .Groups}}
     {{range .Groups}}
+    {{if .Year}}<section id="year-{{.Year}}">{{end}}
     {{if .Year}}<h2 class="year-header">{{.Year}}</h2>{{end}}
     <div class="grid">
       {{range .Cards}}
@@ -55,6 +64,7 @@
       </a>
       {{end}}
     </div>
+    {{if .Year}}</section>{{end}}
     {{end}}
     {{else}}
     <div class="grid"><p class="empty">No public albums yet.</p></div>
@@ -63,6 +73,8 @@
     <p class="empty" id="no-matches" hidden>No galleries match your search.</p>
     {{end}}
   </main>
+
+  {{if .Footer}}<footer>{{.Footer}}</footer>{{end}}
 
   {{if .Cards}}
   <script>
@@ -78,6 +90,8 @@
         const query = input.value.trim().toLowerCase();
         // Year headers group the unfiltered list; once a search narrows
         // it, which years remain is no longer a boundary worth drawing.
+        // The year-jump dropdown stays live either way - see its own
+        // script below.
         for (const header of yearHeaders) header.hidden = query.length > 0;
         let visible = 0;
         for (const card of cards) {
@@ -86,6 +100,24 @@
           if (matches) visible++;
         }
         noMatches.hidden = visible > 0;
+      });
+    })();
+  </script>
+  {{end}}
+
+  {{if .Years}}
+  <script>
+    // Jumps to a year's section regardless of whether the list is currently
+    // filtered: the target is the section wrapping that year's heading and
+    // grid, not the (possibly search-hidden) heading itself, so this keeps
+    // working even mid-search.
+    (() => {
+      const select = document.getElementById('year-jump');
+      select.addEventListener('change', () => {
+        const year = select.value;
+        select.value = ''; // so picking the same year again still fires 'change'
+        if (!year) return;
+        document.getElementById('year-' + year)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
       });
     })();
   </script>

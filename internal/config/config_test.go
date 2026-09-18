@@ -56,6 +56,8 @@ account:
 output: ./public
 site:
   title: My Galleries
+  subtitle: 'Photos from <em>2023</em>'
+  footer: 'Built with <a href="https://example.com">a tool</a>'
 map:
   points: photos
   tiles: https://tiles.example.com/{z}/{x}/{y}.png
@@ -78,6 +80,12 @@ albums:
 	}
 	if cfg.Output != "./public" {
 		t.Errorf("Output = %q", cfg.Output)
+	}
+	if cfg.Site.Subtitle != `Photos from <em>2023</em>` {
+		t.Errorf("Site.Subtitle = %q", cfg.Site.Subtitle)
+	}
+	if cfg.Site.Footer != `Built with <a href="https://example.com">a tool</a>` {
+		t.Errorf("Site.Footer = %q", cfg.Site.Footer)
 	}
 	if cfg.Map.Points != PointsPhotos {
 		t.Errorf("Map.Points = %q", cfg.Map.Points)
